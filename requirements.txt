@@ -32,6 +32,8 @@ rpds-py==2026.9.1
 setuptools==84.2.1
 starlette==1.10.0
 streamlit==1.67.0
+SudachiPy==0.7.0
+SudachiDict-core==20261015
 typing_extensions==4.16.0
 tzdata==2026.6
 urllib3==2.8.0

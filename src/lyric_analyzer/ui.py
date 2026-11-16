@@ -5,6 +5,12 @@ import streamlit as st
 from lyric_analyzer.storage import Library, default_database_path
 from lyric_analyzer.transfer import validate_archive
 from lyric_analyzer.analysis.parsing import analysis_segments, normalize_with_offsets, parse_lines
+from lyric_analyzer.analysis.frequency import analyze
+
+
+@st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
+def cached_analysis(lyrics, include_unknown_tags):
+    return analyze(lyrics, include_unknown_tags)
 
 
 def main():
@@ -16,7 +22,7 @@ def main():
     except (OSError, sqlite3.Error, ValueError) as error:
         st.error(f"保存先を開けませんでした：{error}")
         st.stop()
-    st.info("歌詞・タグ・改訂履歴の管理とJSON入出力に対応しています。行・セクションの確認もできます。重複・定型表現の分析は今後追加します。")
+    st.info("単語・フレーズの集計に対応しました。過去曲との重複・定型表現の検出は今後追加します。")
     if "pending_song" in st.session_state:
         st.session_state["selected_song"] = st.session_state.pop("pending_song")
         st.session_state["search"] = ""
@@ -44,6 +50,19 @@ def main():
                 st.session_state["notice"] = "保存しました。"
                 st.rerun()
         preview = st.form_submit_button("行・セクションを確認")
+        include_unknown_tags = st.checkbox("未知のセクションタグも集計する", key=f"unknown-tags-{selected}")
+        submitted_analysis = st.form_submit_button("単語・フレーズを分析", key="analyze")
+    if submitted_analysis:
+        try:
+            result = cached_analysis(lyrics, include_unknown_tags)
+        except (ValueError, RuntimeError, OSError) as error:
+            st.session_state.pop("analysis_result", None)
+            st.error(f"分析できませんでした：{error}")
+        else:
+            st.session_state["analysis_result"] = (selected, lyrics, result)
+    stored = st.session_state.get("analysis_result")
+    if stored is not None and stored[0] == selected:
+        frequency_panel(stored[1], stored[2])
     if preview:
         st.subheader("解析の下準備")
         st.caption("セクションタグは集計対象から除外します。本文中のブラケットは保持します。")
@@ -62,6 +81,33 @@ def main():
             st.rerun()
     transfer_panel(library)
     st.caption(f"保存先：{library.path}")
+
+
+def frequency_panel(lyrics, result):
+    st.subheader("単語・フレーズの集計")
+    st.caption("最後に分析ボタンを押した歌詞の結果です。編集後は再分析してください。分析だけでは歌詞は保存されません。")
+    st.caption(f"解析器 {result.tokenizer_version} / core辞書 {result.dictionary_version} / 分割 A / {result.analyzer_version}")
+    mode = st.selectbox("集計の種類", ["単語（原形）", "フレーズ（原文一致）", "フレーズ（全角・半角を統一）"], key="frequency_mode")
+    rows = {"単語（原形）": result.words, "フレーズ（原文一致）": result.phrases_surface,
+            "フレーズ（全角・半角を統一）": result.phrases_normalized}[mode]
+    st.caption("単語は名詞・動詞・形容詞、フレーズは助詞・助動詞を含む連続2〜5語を集計します。フレーズの活用形は統合しません。")
+    if not rows:
+        st.info("集計できる語句がありません。歌詞本文を入力してください。")
+        return
+    displayed = rows[:50]
+    st.caption(f"{len(rows)}種類中、上位{len(displayed)}件を表示。回数は同じ行・サビの反復も含みます。異なる本文行数は同じ本文の行をまとめた数です。")
+    st.dataframe([{"語句": row.expression, "品詞": row.pos, "回数": row.count,
+                   "異なる本文行数": row.unique_line_count,
+                   "表記別回数": " / ".join(f"{surface}：{count}" for surface, count in row.variants.items()),
+                   "出現行": ", ".join(str(number) for number in sorted({item.line_number for item in row.occurrences}))}
+                  for row in displayed], hide_index=True, alt="語句ごとの回数・表記・出現行", key="frequency_table")
+    selected_index = st.selectbox("出現箇所を確認", range(len(displayed)),
+                                  format_func=lambda index: f"{displayed[index].expression}（{displayed[index].count}回）",
+                                  key=f"frequency-detail-{mode}")
+    for item in displayed[selected_index].occurrences:
+        st.caption(f"{item.line_number}行目 / {item.section or 'セクションなし'}")
+        st.text(item.line_text)
+        st.text(f"該当表記：{lyrics[item.start:item.end]}")
 
 
 def transfer_panel(library):

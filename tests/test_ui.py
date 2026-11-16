@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from streamlit.testing.v1 import AppTest
 from lyric_analyzer.storage import Library
 
@@ -49,5 +51,31 @@ def test_invalid_upload_shows_error_without_writes(tmp_path, monkeypatch):
     assert not app.exception
     assert app.error
     assert Library(tmp_path / "library.db").list_songs() == []
-from pathlib import Path
+
+
+def test_analyze_unsaved_lyrics_and_switch_count_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("[Verse]\nＡの声\nAの声\n記憶がほどけていく\n記憶がほどけていく")
+    app.button(key="analyze").click().run()
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert table.loc[table["語句"] == "ほどける", "回数"].iloc[0] == 2
+    app.selectbox(key="frequency_mode").select("フレーズ（全角・半角を統一）").run()
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert table.loc[table["語句"] == "Aの声", "回数"].iloc[0] == 2
+    assert Library(tmp_path / "library.db").list_songs() == []
+    app.selectbox(key="frequency_mode").select("フレーズ（原文一致）").run()
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert table.loc[table["語句"] == "Ａの声", "回数"].iloc[0] == 1
+
+
+def test_blank_analysis_does_not_crash(tmp_path, monkeypatch):
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.button(key="analyze").click().run()
+    assert not app.exception
+    assert any("集計できる語句がありません" in item.value for item in app.info)
 
