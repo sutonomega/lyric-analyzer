@@ -88,6 +88,30 @@ class HistoryStore:
         with self.library.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT id, created_at, json_extract(payload_json,'$.title') AS title FROM analysis_runs ORDER BY created_at DESC, id")]
 
+    def candidate_evaluations(self):
+        """Project only generation metadata and the latest review, not corpus lyrics."""
+        with self.library.connection() as connection:
+            rows = connection.execute("""
+                SELECT a.id AS run_id, json_extract(a.payload_json,'$.title') AS title,
+                       CAST(j.key AS INTEGER) AS suggestion_index,
+                       json_extract(j.value,'$.provider') AS provider,
+                       json_extract(j.value,'$.model') AS model,
+                       json_extract(j.value,'$.prompt_version') AS prompt_version,
+                       json_extract(j.value,'$.created_at') AS generated_at,
+                       json_extract(j.value,'$.request.line_id') AS line_id,
+                       json_extract(j.value,'$.request.theme') AS theme,
+                       json_extract(j.value,'$.candidate_review') AS review_json
+                FROM analysis_runs AS a, json_each(a.payload_json,'$.ai_suggestions') AS j
+                ORDER BY a.created_at DESC,a.id,CAST(j.key AS INTEGER) DESC
+            """)
+            records = []
+            for row in rows:
+                item = dict(row)
+                raw = item.pop("review_json")
+                item["review"] = json.loads(raw) if raw else None
+                records.append(item)
+            return records
+
     def related_count(self, song_id):
         with self.library.connection() as connection:
             return connection.execute("SELECT COUNT(*) FROM analysis_runs WHERE target_song_id=? OR id IN (SELECT run_id FROM analysis_sources WHERE song_id=?)", (song_id, song_id)).fetchone()[0]

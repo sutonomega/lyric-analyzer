@@ -14,6 +14,7 @@ from lyric_analyzer.history import HistoryStore
 from lyric_analyzer.report_ui import report_panel, history_panel, exclusion_panel
 from lyric_analyzer.backup_ui import backup_panel
 from lyric_analyzer.folder_ui import folder_panel
+from lyric_analyzer.review_summary_ui import summary_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -163,6 +164,7 @@ def main():
     transfer_panel(library)
     rule_editor(library)
     exclusion_panel(history)
+    summary_panel(history)
     history_panel(history)
     backup_panel(library)
     folder_panel(library)
