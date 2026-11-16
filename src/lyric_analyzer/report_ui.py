@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 
 from lyric_analyzer.analysis.report import exclusion_for, group_evidence, group_findings
+from lyric_analyzer.local_ai_ui import local_ai_panel
 
 
 def report_panel(store, report, prefix, editable=False):
@@ -81,6 +82,7 @@ def report_panel(store, report, prefix, editable=False):
         st.text(report["input"])
         st.json({"settings": report["settings"], "versions": report["versions"], "rules": report["rules"],
                  "corpus": [{key: source[key] for key in ("song_id", "title", "revision_id", "revision_number", "content_hash")} for source in report["corpus"]]})
+    local_ai_panel(store, report, prefix)
     st.download_button("この分析結果をJSONで保存", json.dumps(report, ensure_ascii=False, indent=2),
                        file_name=f"lyric-analysis-{report['id']}.json", mime="application/json", key=f"{prefix}-download")
     review_panel(store, report, prefix)

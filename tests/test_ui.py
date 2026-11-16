@@ -300,6 +300,81 @@ def test_old_report_reviews_keep_occurrence_based_candidates(tmp_path, monkeypat
     assert any("旧版の評価" in item.value for item in app.caption)
 
 
+def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(tmp_path, monkeypatch):
+    from lyric_analyzer import local_ai
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    calls = []
+    def models():
+        calls.append("models")
+        return ("local:3b",)
+    def generate(model, request):
+        calls.append(request)
+        return {"provider": "ollama-local", "model": model, "prompt_version": local_ai.PROMPT_VERSION,
+                "created_at": Library.now(), "request": request,
+                "result": {"line_id": request["line_id"], "original": request["original"], "reason": "物や動作で描く",
+                           "candidates": [{"direction": d, "text": "切符を折って君を待つ"} for d in local_ai.DIRECTIONS]}}
+    monkeypatch.setattr(local_ai, "list_models", models)
+    monkeypatch.setattr(local_ai, "generate", generate)
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("[Verse]\n心の奥で\n次の行\n送らない行")
+    app.button(key="report").click().run()
+    run_id = app.session_state["current_report"]
+    prefix = f"current-{run_id}"
+    assert not app.checkbox(key=f"{prefix}-ai-enabled").value
+    assert calls == []
+    app.checkbox(key=f"{prefix}-ai-enabled").check().run()
+    assert calls == []
+    app.button(key=f"{prefix}-ai-connect").click().run()
+    assert calls == ["models"]
+    assert app.button(key=f"{prefix}-ai-generate").disabled
+    consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
+    consent.check().run()
+    app.text_input(key=f"{prefix}-ai-theme").set_value("朝の駅").run()
+    assert app.button(key=f"{prefix}-ai-generate").disabled
+    consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
+    consent.check().run()
+    for _ in range(2):
+        app.button(key=f"{prefix}-ai-generate").click().run()
+        assert not app.exception
+    store = HistoryStore(Library(tmp_path / "library.db"))
+    saved = store.get(run_id)["ai_suggestions"]
+    assert len(saved) == 2
+    assert saved[0]["request"]["original"] == "心の奥で"
+    assert saved[0]["request"]["context_after"] == ["次の行"]
+    assert "送らない行" not in str(saved[0]["request"])
+    assert app.checkbox(key=f"{prefix}-ai-saved").value
+    assert len(store.list_runs()) == 1
+
+
+def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):
+    from lyric_analyzer import local_ai
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(local_ai, "list_models", lambda: ("local:3b",))
+    def fail(model, request):
+        raise local_ai.LocalAIError("応答形式が不正")
+    monkeypatch.setattr(local_ai, "generate", fail)
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("心の奥で")
+    app.button(key="report").click().run()
+    run_id = app.session_state["current_report"]
+    prefix = f"current-{run_id}"
+    store = HistoryStore(Library(tmp_path / "library.db"))
+    before = store.get(run_id)
+    app.checkbox(key=f"{prefix}-ai-enabled").check().run()
+    app.button(key=f"{prefix}-ai-connect").click().run()
+    consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
+    consent.check().run()
+    app.button(key=f"{prefix}-ai-generate").click().run()
+    assert not app.exception
+    assert app.error
+    assert app.dataframe
+    assert store.get(run_id) == before
+
+
 def test_import_folder_path_and_styles_editor(tmp_path, monkeypatch, caplog):
     from lyric_analyzer.folder_ui import TEMPLATE
 

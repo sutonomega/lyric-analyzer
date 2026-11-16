@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from lyric_analyzer.analysis.expressions import validate_rule
 from lyric_analyzer.storage import MIGRATIONS
+from lyric_analyzer.local_ai import validate_saved_suggestion
 
 
 TABLES = ("schema_migrations", "songs", "song_revisions", "tags", "song_tags", "expression_rules",
@@ -42,6 +43,11 @@ def export_backup(library):
 def _validate_report(report):
     if not isinstance(report, dict):
         raise ValueError("分析履歴の形式が不正です。")
+    suggestions = report.get("ai_suggestions", [])
+    if not isinstance(suggestions, list) or len(suggestions) > 20:
+        raise ValueError("AI候補の保存件数が不正です。")
+    for suggestion in suggestions:
+        validate_saved_suggestion(report, suggestion)
     for key in ("id", "title", "input", "input_hash", "created_at"):
         if not isinstance(report[key], str):
             raise ValueError("分析履歴の文字項目が不正です。")

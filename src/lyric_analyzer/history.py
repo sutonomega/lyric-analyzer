@@ -32,6 +32,22 @@ class HistoryStore:
             row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def save_suggestion(self, run_id, suggestion):
+        from lyric_analyzer.local_ai import validate_saved_suggestion
+
+        with self.library.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ValueError("分析履歴が見つかりません。")
+            report = json.loads(row[0])
+            validate_saved_suggestion(report, suggestion)
+            suggestions = report.setdefault("ai_suggestions", [])
+            if len(suggestions) >= 20:
+                raise ValueError("1回の分析履歴に保存できるAI候補は20回までです。")
+            suggestions.append(suggestion)
+            connection.execute("UPDATE analysis_runs SET payload_json=? WHERE id=?", (json.dumps(report, ensure_ascii=False), run_id))
+
     def list_runs(self):
         with self.library.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT id, created_at, json_extract(payload_json,'$.title') AS title FROM analysis_runs ORDER BY created_at DESC, id")]
