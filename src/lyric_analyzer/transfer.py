@@ -55,6 +55,8 @@ def validate_archive(content):
         song_ids.add(song_id)
         text(song, "title", True)
         text(song, "theme")
+        song.setdefault("styles", "")
+        text(song, "styles")
         timestamp(song, "created_at")
         timestamp(song, "updated_at")
         tags = song.get("tags")

@@ -18,6 +18,7 @@ class SongSnapshot:
     lyrics: str
     content_hash: str
     created_at: str
+    styles: str = ""
 
 
 @dataclass(frozen=True)

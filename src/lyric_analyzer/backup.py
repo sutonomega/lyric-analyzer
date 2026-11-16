@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -127,7 +127,7 @@ def validated_backup(content):
         archive = json.loads(content)
         if (not isinstance(archive, dict) or archive.get("format") != "lyric-analyzer-backup"
                 or type(archive.get("version")) is not int or archive["version"] != 1
-                or type(archive.get("schema_version")) is not int or archive["schema_version"] != len(MIGRATIONS)):
+                or type(archive.get("schema_version")) is not int or not 5 <= archive["schema_version"] <= len(MIGRATIONS)):
             raise ValueError("このアプリで対応していないバックアップ形式です。")
         if datetime.fromisoformat(archive["created_at"]).utcoffset() is None:
             raise ValueError("バックアップの作成日時が不正です。")
@@ -144,6 +144,11 @@ def validated_backup(content):
             rows = tables[table]
             if not isinstance(rows, list):
                 raise ValueError("テーブルの形式が不正です。")
+            if table == "songs" and archive["schema_version"] < 6:
+                rows = [{**row, "styles": ""} if isinstance(row, dict) and "styles" not in row else row for row in rows]
+            if table == "schema_migrations":
+                rows = [*rows, *({"version": version, "applied_at": datetime.now(timezone.utc).isoformat()}
+                                 for version in range(archive["schema_version"] + 1, len(MIGRATIONS) + 1))]
             for row in rows:
                 if not isinstance(row, dict) or set(row) != set(columns):
                     raise ValueError("保存項目の形式が不正です。")

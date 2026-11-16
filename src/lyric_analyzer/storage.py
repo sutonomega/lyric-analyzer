@@ -33,6 +33,9 @@ MIGRATIONS = (
     (
         "CREATE TABLE finding_reviews (run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE, finding_id TEXT NOT NULL, label TEXT NOT NULL CHECK(label IN ('useful','intentional','false_positive')), note TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id,finding_id))",
     ),
+    (
+        "ALTER TABLE songs ADD COLUMN styles TEXT NOT NULL DEFAULT ''",
+    ),
 )
 
 
@@ -82,17 +85,19 @@ class Library:
     def now():
         return datetime.now(timezone.utc).isoformat()
 
-    def save(self, title, lyrics, theme="", song_id=None, tags=None):
+    def save(self, title, lyrics, theme="", song_id=None, tags=None, styles=None):
         if not title.strip() or not lyrics.strip():
             raise ValueError("曲名と歌詞を入力してください。")
+        if styles is not None and not isinstance(styles, str):
+            raise ValueError("Stylesは文字列で入力してください。")
         timestamp = self.now()
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if song_id is None:
                 song_id = str(uuid4())
-                connection.execute("INSERT INTO songs VALUES (?, ?, ?, ?, ?)", (song_id, title.strip(), theme, timestamp, timestamp))
+                connection.execute("INSERT INTO songs (id,title,theme,created_at,updated_at,styles) VALUES (?, ?, ?, ?, ?, ?)", (song_id, title.strip(), theme, timestamp, timestamp, styles or ""))
             else:
-                changed = connection.execute("UPDATE songs SET title=?, theme=?, updated_at=? WHERE id=?", (title.strip(), theme, timestamp, song_id))
+                changed = connection.execute("UPDATE songs SET title=?, theme=?, updated_at=?, styles=COALESCE(?,styles) WHERE id=?", (title.strip(), theme, timestamp, styles, song_id))
                 if changed.rowcount != 1:
                     raise ValueError("曲が見つかりません。")
             latest = connection.execute("SELECT * FROM song_revisions WHERE song_id=? ORDER BY revision_number DESC LIMIT 1", (song_id,)).fetchone()
@@ -119,7 +124,7 @@ class Library:
             for row in rows:
                 song = dict(row)
                 song["tags"] = [item[0] for item in connection.execute("SELECT tags.name FROM tags JOIN song_tags ON tags.id=song_tags.tag_id WHERE song_id=? ORDER BY tags.name", (song["id"],))]
-                searchable = "\n".join([song["title"], song["lyrics_raw"], song["theme"], *song["tags"]])
+                searchable = "\n".join([song["title"], song["lyrics_raw"], song["theme"], song["styles"], *song["tags"]])
                 if query.casefold() in searchable.casefold() and (tag is None or tag in song["tags"]):
                     songs.append(song)
             return songs
@@ -139,8 +144,8 @@ class Library:
         from lyric_analyzer.analysis.comparison import SongSnapshot
 
         with self.connection() as connection:
-            rows = connection.execute("SELECT songs.id AS song_id, songs.title, songs.created_at, song_revisions.id AS revision_id, revision_number, lyrics_raw, content_hash FROM songs JOIN song_revisions ON song_revisions.song_id=songs.id WHERE revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.id").fetchall()
-            return tuple(SongSnapshot(row["song_id"], row["title"], row["revision_id"], row["revision_number"], row["lyrics_raw"], row["content_hash"], row["created_at"]) for row in rows)
+            rows = connection.execute("SELECT songs.id AS song_id, songs.title, songs.styles, songs.created_at, song_revisions.id AS revision_id, revision_number, lyrics_raw, content_hash FROM songs JOIN song_revisions ON song_revisions.song_id=songs.id WHERE revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.id").fetchall()
+            return tuple(SongSnapshot(row["song_id"], row["title"], row["revision_id"], row["revision_number"], row["lyrics_raw"], row["content_hash"], row["created_at"], row["styles"]) for row in rows)
 
     def import_json(self, content, conflict="skip"):
         from lyric_analyzer.transfer import validate_archive
@@ -157,7 +162,7 @@ class Library:
                     skipped += 1
                     continue
                 song_id = str(uuid4()) if exists else song["id"]
-                connection.execute("INSERT INTO songs VALUES (?, ?, ?, ?, ?)", (song_id, song["title"], song["theme"], song["created_at"], song["updated_at"]))
+                connection.execute("INSERT INTO songs (id,title,theme,created_at,updated_at,styles) VALUES (?, ?, ?, ?, ?, ?)", (song_id, song["title"], song["theme"], song["created_at"], song["updated_at"], song["styles"]))
                 for revision in song["revisions"]:
                     revision_id = str(uuid4()) if exists else revision["id"]
                     connection.execute("INSERT INTO song_revisions VALUES (?, ?, ?, ?, ?, ?)", (revision_id, song_id, revision["revision_number"], revision["lyrics_raw"], revision["content_hash"], revision["created_at"]))

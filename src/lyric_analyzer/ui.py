@@ -13,6 +13,7 @@ from lyric_analyzer.analysis.report import build_report
 from lyric_analyzer.history import HistoryStore
 from lyric_analyzer.report_ui import report_panel, history_panel, exclusion_panel
 from lyric_analyzer.backup_ui import backup_panel
+from lyric_analyzer.folder_ui import folder_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -54,15 +55,24 @@ def main():
     song = by_id.get(selected, {})
     corpus = library.comparison_corpus()
     comparison_options = {item.song_id: item for item in corpus if item.song_id != selected}
+    if st.session_state.pop("reset_comparison_targets", False):
+        for key in list(st.session_state):
+            if key.startswith("comparison-songs-"):
+                del st.session_state[key]
+        st.session_state[f"comparison-songs-{selected}"] = list(comparison_options)
+    comparison_key = f"comparison-songs-{selected}"
+    if comparison_key not in st.session_state:
+        st.session_state[comparison_key] = list(comparison_options)
     history = HistoryStore(library)
     with st.form(f"song-{selected}"):
         title = st.text_input("曲名", value=song.get("title", ""))
         theme = st.text_input("テーマ", value=song.get("theme", ""))
         tags = st.text_input("タグ（カンマ区切り）", value=", ".join(song.get("tags", [])))
         lyrics = st.text_area("歌詞", value=song.get("lyrics_raw", ""), height=320)
+        styles = st.text_area("Styles（曲のスタイル）", value=song.get("styles", ""), height=90, key=f"styles-{selected}")
         if st.form_submit_button("保存"):
             try:
-                saved_id = library.save(title, lyrics, theme, selected, tags=tags.split(","))
+                saved_id = library.save(title, lyrics, theme, selected, tags=tags.split(","), styles=styles)
             except (ValueError, sqlite3.Error) as error:
                 st.error(str(error))
             else:
@@ -73,9 +83,9 @@ def main():
         include_unknown_tags = st.checkbox("未知のセクションタグも集計する", key=f"unknown-tags-{selected}")
         submitted_analysis = st.form_submit_button("単語・フレーズを分析", key="analyze")
         st.caption("比較する曲は各曲の最新版です。編集中の曲は自動で除外します。")
-        comparison_ids = st.multiselect("比較対象の曲", list(comparison_options), default=list(comparison_options),
+        comparison_ids = st.multiselect("比較対象の曲", list(comparison_options),
                                         format_func=lambda song_id: f"{comparison_options[song_id].title}（{song_id[:8]}）",
-                                        key=f"comparison-songs-{selected}")
+                                        key=comparison_key)
         start_date = st.date_input("登録日・開始（任意、日本時間）", value=None, key="comparison_start")
         end_date = st.date_input("登録日・終了（任意、日本時間）", value=None, key="comparison_end")
         submitted_comparison = st.form_submit_button("過去曲と比較", key="compare")
@@ -87,7 +97,7 @@ def main():
             comparison = cached_comparison(lyrics, corpus, selected, tuple(comparison_ids), start_date, end_date, include_unknown_tags)
             detection = cached_detection(lyrics, library.list_rules(), include_unknown_tags)
             settings = {"selected_ids": comparison_ids, "start_date": start_date.isoformat() if start_date else None,
-                        "end_date": end_date.isoformat() if end_date else None, "include_unknown_tags": include_unknown_tags,
+                        "end_date": end_date.isoformat() if end_date else None, "include_unknown_tags": include_unknown_tags, "styles": styles,
                         "thresholds": {"min_songs": 3, "min_ratio": 0.2, "small_corpus": 10, "reference_songs": 2}}
             report = build_report(lyrics, comparison, detection, settings)
             run_id = history.save(report, title, selected)
@@ -155,6 +165,7 @@ def main():
     exclusion_panel(history)
     history_panel(history)
     backup_panel(library)
+    folder_panel(library)
     st.caption(f"保存先：{library.path}")
 
 

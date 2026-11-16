@@ -239,3 +239,51 @@ def test_review_form_persists_classification(tmp_path, monkeypatch):
     assert store.reviews(run_id)[finding_id]["label"] == "intentional"
     assert any("有用率 0%" in item.value for item in app.text)
 
+
+def test_import_folder_path_and_styles_editor(tmp_path, monkeypatch, caplog):
+    from lyric_analyzer.folder_ui import TEMPLATE
+
+    folder = tmp_path / "lyrics"
+    folder.mkdir()
+    (folder / "song.txt").write_text(TEMPLATE, encoding="utf-8")
+    data = tmp_path / "data"
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(data))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.checkbox(key="show_folder_import").check().run()
+    app.text_input(key="folder_path").set_value(str(folder)).run()
+    app.button(key="scan_folder").click().run()
+    assert not app.exception
+    assert Library(data / "library.db").list_songs() == []
+    app.button(key="import_folder").click().run()
+    assert not app.exception
+    assert app.success
+    library = Library(data / "library.db")
+    song = library.list_songs()[0]
+    assert song["styles"] == "mellow pop, piano, female vocal"
+    assert app.multiselect(key="comparison-songs-None").value == [song["id"]]
+    assert "was created with a default value" not in caplog.text
+    app.selectbox(key="selected_song").select(song["id"]).run()
+    assert app.text_area(key=f"styles-{song['id']}").value == song["styles"]
+    app.text_area(key=f"styles-{song['id']}").set_value("rock")
+    app.form_submit_button[0].click().run()
+    assert not app.exception
+    assert library.list_songs()[0]["styles"] == "rock"
+
+
+def test_browser_folder_import_requires_acknowledging_invalid_files(tmp_path, monkeypatch):
+    from lyric_analyzer.folder_ui import TEMPLATE
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.checkbox(key="show_folder_import").check().run()
+    app.radio(key="folder_mode").set_value("フォルダーを選択").run()
+    app.file_uploader(key="folder_files").set_value([("song.txt", TEMPLATE.encode(), "text/plain"), ("broken.txt", b"invalid", "text/plain")]).run()
+    app.button(key="scan_uploaded_folder").click().run()
+    assert not app.exception
+    assert app.button(key="import_folder").disabled
+    acknowledge = next(item for item in app.checkbox if item.key and item.key.endswith("-skip-errors"))
+    acknowledge.check().run()
+    app.button(key="import_folder").click().run()
+    assert not app.exception
+    assert len(Library(tmp_path / "library.db").list_songs()) == 1
+
