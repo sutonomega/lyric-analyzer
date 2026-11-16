@@ -61,7 +61,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _json_request(path, payload=None, timeout=5):
-    if path not in {"/api/tags", "/api/show", "/api/chat"}:
+    if path not in {"/api/tags", "/api/show", "/api/chat", "/api/embed"}:
         raise LocalAIError("未対応の接続先です。")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(ENDPOINT + path,

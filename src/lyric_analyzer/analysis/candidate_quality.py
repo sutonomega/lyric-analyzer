@@ -20,11 +20,24 @@ def negative_words(text):
             and token.lemma in {"ない", "無い", "ぬ", "ず", "まい"}]
 
 
+def meaning_differences(original, text):
+    checks = []
+    original_lemmas = {token.lemma for token in tokenize(original)}
+    candidate_lemmas = {token.lemma for token in tokenize(text)}
+    for terms, label in ((PEOPLE, "人物を表す語"), (TIMES, "時間を表す語")):
+        before, after = sorted(original_lemmas & terms), sorted(candidate_lemmas & terms)
+        if before != after:
+            checks.append(f"{label}の差：{'・'.join(before) or '該当なし'} → {'・'.join(after) or '該当なし'}")
+    if bool(re.search(r"[?？]\s*$", original)) != bool(re.search(r"[?？]\s*$", text)):
+        checks.append("文末の疑問符の有無が異なる")
+    if bool(negative_words(original)) != bool(negative_words(text)):
+        checks.append("否定語の有無が異なる")
+    return checks
+
+
 def inspect_candidates(result, request=None):
     """Show observable differences, never a semantic-equivalence score."""
     original = result["original"]
-    original_negative = negative_words(original)
-    original_lemmas = {token.lemma for token in tokenize(original)}
     candidates = result["candidates"]
     rows = []
     for candidate in candidates:
@@ -37,15 +50,7 @@ def inspect_candidates(result, request=None):
         if request and any(canonical(text) == canonical(line) for line in [*request["context_before"], *request["context_after"]]):
             checks.append("前後の本文行をそのまま使用")
         if candidate["direction"] == "meaning":
-            candidate_lemmas = {token.lemma for token in tokenize(text)}
-            for terms, label in ((PEOPLE, "人物を表す語"), (TIMES, "時間を表す語")):
-                before, after = sorted(original_lemmas & terms), sorted(candidate_lemmas & terms)
-                if before != after:
-                    checks.append(f"{label}の差：{'・'.join(before) or '該当なし'} → {'・'.join(after) or '該当なし'}")
-            if bool(re.search(r"[?？]\s*$", original)) != bool(re.search(r"[?？]\s*$", text)):
-                checks.append("文末の疑問符の有無が異なる")
-            if bool(original_negative) != bool(negative_words(text)):
-                checks.append("否定語の有無が異なる")
+            checks.extend(meaning_differences(original, text))
         rows.append({"direction": candidate["direction"], "checks": checks})
     return rows
 
