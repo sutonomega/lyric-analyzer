@@ -7,25 +7,44 @@ class HistoryStore:
         self.library = library
 
     def save(self, report, title, song_id=None):
-        run_id = str(uuid4())
-        created_at = self.library.now()
         with self.library.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            revision_id = None
-            if song_id:
-                latest = connection.execute("SELECT id, content_hash FROM song_revisions WHERE song_id=? ORDER BY revision_number DESC LIMIT 1", (song_id,)).fetchone()
-                if latest is None:
-                    raise ValueError("分析対象の曲が見つかりません。")
-                if latest["content_hash"] == report["input_hash"]:
-                    revision_id = latest["id"]
-            exclusions = [dict(row) for row in connection.execute("SELECT * FROM exclusions WHERE enabled=1 AND (scope='global' OR (scope='song' AND song_id=?)) ORDER BY id", (song_id,))]
-            payload = {**report, "id": run_id, "title": title.strip() or "未保存の歌詞", "song_id": song_id,
-                       "target_revision_id": revision_id, "created_at": created_at, "exclusions": exclusions}
-            connection.execute("INSERT INTO analysis_runs VALUES (?, ?, ?, ?, ?)",
-                               (run_id, song_id, revision_id, json.dumps(payload, ensure_ascii=False), created_at))
-            for source in report["corpus"]:
-                connection.execute("INSERT INTO analysis_sources VALUES (?, ?, ?)", (run_id, source["song_id"], source["revision_id"]))
+            return self._save(connection, report, title, song_id)
+
+    def _save(self, connection, report, title, song_id):
+        run_id = str(uuid4())
+        created_at = self.library.now()
+        revision_id = None
+        if song_id:
+            latest = connection.execute("SELECT id, content_hash FROM song_revisions WHERE song_id=? ORDER BY revision_number DESC LIMIT 1", (song_id,)).fetchone()
+            if latest is None:
+                raise ValueError("分析対象の曲が見つかりません。")
+            if latest["content_hash"] == report["input_hash"]:
+                revision_id = latest["id"]
+        exclusions = [dict(row) for row in connection.execute("SELECT * FROM exclusions WHERE enabled=1 AND (scope='global' OR (scope='song' AND song_id=?)) ORDER BY id", (song_id,))]
+        payload = {**report, "id": run_id, "title": title.strip() or "未保存の歌詞", "song_id": song_id,
+                   "target_revision_id": revision_id, "created_at": created_at, "exclusions": exclusions}
+        connection.execute("INSERT INTO analysis_runs VALUES (?, ?, ?, ?, ?)",
+                           (run_id, song_id, revision_id, json.dumps(payload, ensure_ascii=False), created_at))
+        for source in report["corpus"]:
+            connection.execute("INSERT INTO analysis_sources VALUES (?, ?, ?)", (run_id, source["song_id"], source["revision_id"]))
         return run_id
+
+    def save_batch(self, reports, corpus, rules):
+        if not isinstance(reports, list) or not 1 <= len(reports) <= 20:
+            raise ValueError("一括分析は1〜20曲で指定してください。")
+        sources = {song.song_id: song for song in corpus}
+        ids = [song_id for song_id, report in reports]
+        if len(set(ids)) != len(ids) or set(ids) - set(sources):
+            raise ValueError("一括分析の対象曲を確認してください。")
+        with self.library.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if self.library.comparison_corpus() != corpus or self.library.list_rules() != rules:
+                raise ValueError("曲または辞書が変更されています。条件を確認してやり直してください。履歴は保存していません。")
+            for song_id, report in reports:
+                if report["input"] != sources[song_id].lyrics or report["input_hash"] != sources[song_id].content_hash:
+                    raise ValueError("対象の歌詞が一致しません。履歴は保存していません。")
+            return [{"song_id": song_id, "run_id": self._save(connection, report, sources[song_id].title, song_id)} for song_id, report in reports]
 
     def get(self, run_id):
         with self.library.connection() as connection:

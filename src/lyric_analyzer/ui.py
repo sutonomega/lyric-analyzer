@@ -19,6 +19,7 @@ from lyric_analyzer.library_vocabulary_ui import vocabulary_panel
 from lyric_analyzer.trends_ui import trends_panel
 from lyric_analyzer.date_batch_ui import date_batch_panel
 from lyric_analyzer.finding_reviews_ui import finding_reviews_panel
+from lyric_analyzer.batch_analysis_ui import batch_analysis_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -176,6 +177,7 @@ def main():
     rule_editor(library)
     exclusion_panel(history)
     summary_panel(history)
+    batch_analysis_panel(history, corpus)
     finding_reviews_panel(history)
     history_panel(history)
     backup_panel(library)
