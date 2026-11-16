@@ -66,6 +66,24 @@ class HistoryStore:
             validate_saved_suggestion(report, item)
             connection.execute("UPDATE analysis_runs SET payload_json=? WHERE id=?", (json.dumps(report, ensure_ascii=False), run_id))
 
+    def save_candidate_review(self, run_id, suggestion_index, decisions, meaning_checks):
+        from lyric_analyzer.analysis.candidate_quality import validate_review
+
+        review = {"version": "candidate-review-1", "updated_at": self.library.now(),
+                  "decisions": decisions, "meaning_checks": meaning_checks}
+        validate_review(review)
+        with self.library.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ValueError("分析履歴が見つかりません。")
+            report = json.loads(row[0])
+            suggestions = report.get("ai_suggestions", [])
+            if type(suggestion_index) is not int or not 0 <= suggestion_index < len(suggestions):
+                raise ValueError("評価する候補が見つかりません。")
+            suggestions[suggestion_index]["candidate_review"] = review
+            connection.execute("UPDATE analysis_runs SET payload_json=? WHERE id=?", (json.dumps(report, ensure_ascii=False), run_id))
+
     def list_runs(self):
         with self.library.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT id, created_at, json_extract(payload_json,'$.title') AS title FROM analysis_runs ORDER BY created_at DESC, id")]

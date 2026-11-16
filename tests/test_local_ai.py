@@ -69,8 +69,13 @@ def test_generate_sends_only_previewed_context_and_uses_schema(monkeypatch):
     assert json.loads(payload["messages"][1]["content"]) == request
     assert payload["format"] == ai.SCHEMA
     assert payload["stream"] is False
+    assert payload["messages"][0]["content"] == ai.LEGACY_SYSTEM
     assert timeout == 45
     assert not any(key in payload for key in ("tools", "web_search"))
+    ai.generate("local:3b", request, prompt_version="local-rewrite-2")
+    assert calls[-1][1]["messages"][0]["content"] == ai.SYSTEM
+    with pytest.raises(ai.LocalAIError):
+        ai.generate("local:3b", request, prompt_version="unknown")
 
 
 @pytest.mark.parametrize("model", ["remote:cloud", "https://example.com", "local\nother", "missing", "alias"])

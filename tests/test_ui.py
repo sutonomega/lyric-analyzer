@@ -309,9 +309,9 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     def models():
         calls.append("models")
         return ("local:3b",)
-    def generate(model, request):
+    def generate(model, request, prompt_version=None):
         calls.append(request)
-        return {"provider": "ollama-local", "model": model, "prompt_version": local_ai.PROMPT_VERSION,
+        return {"provider": "ollama-local", "model": model, "prompt_version": prompt_version or local_ai.DEFAULT_PROMPT_VERSION,
                 "created_at": Library.now(), "request": request,
                 "result": {"line_id": request["line_id"], "original": request["original"], "reason": "物や動作で描く",
                            "candidates": [{"direction": d, "text": "切符を折って君を待つ"} for d in local_ai.DIRECTIONS]}}
@@ -335,6 +335,10 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     assert app.button(key=f"{prefix}-ai-generate").disabled
     consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
     consent.check().run()
+    app.selectbox(key=f"{prefix}-ai-method").select("local-rewrite-2").run()
+    assert app.button(key=f"{prefix}-ai-generate").disabled
+    consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
+    consent.check().run()
     for _ in range(2):
         app.button(key=f"{prefix}-ai-generate").click().run()
         assert not app.exception
@@ -354,6 +358,15 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     app.button(key=f"{prefix}-reading-save-1").click().run()
     assert not app.exception
     assert store.get(run_id)["ai_suggestions"][1]["prosody"]["rows"][0]["mora"] == 7
+    app.checkbox(key=f"{prefix}-quality-open-1").check().run()
+    app.selectbox(key=f"{prefix}-quality-check-1-subject").select("changed")
+    app.selectbox(key=f"{prefix}-quality-verdict-1-meaning").select("edit")
+    app.text_input(key=f"{prefix}-quality-note-1-meaning").set_value("主語を戻して使う")
+    app.button(key=f"{prefix}-quality-save-1").click().run()
+    assert not app.exception
+    assessment = store.get(run_id)["ai_suggestions"][1]["candidate_review"]
+    assert assessment["meaning_checks"]["subject"] == "changed"
+    assert assessment["decisions"]["meaning"]["verdict"] == "edit"
     assert app.selectbox(key=f"{prefix}-ai-history").value == 1
     app.text_input(key=f"{prefix}-reading-1-original").set_value("ABC")
     app.button(key=f"{prefix}-reading-save-1").click().run()
@@ -368,7 +381,7 @@ def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):
 
     monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(local_ai, "list_models", lambda: ("local:3b",))
-    def fail(model, request):
+    def fail(model, request, prompt_version=None):
         raise local_ai.LocalAIError("応答形式が不正")
     monkeypatch.setattr(local_ai, "generate", fail)
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
