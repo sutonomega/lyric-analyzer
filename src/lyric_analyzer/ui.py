@@ -9,6 +9,9 @@ from lyric_analyzer.analysis.frequency import analyze
 from lyric_analyzer.analysis.comparison import collapse_contained, compare
 from lyric_analyzer.analysis.expressions import detect
 from lyric_analyzer.expression_ui import detection_panel, rule_editor
+from lyric_analyzer.analysis.report import build_report
+from lyric_analyzer.history import HistoryStore
+from lyric_analyzer.report_ui import report_panel, history_panel, exclusion_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -35,7 +38,7 @@ def main():
     except (OSError, sqlite3.Error, ValueError) as error:
         st.error(f"保存先を開けませんでした：{error}")
         st.stop()
-    st.info("単語・フレーズ集計、過去曲比較、登録ルールによる定型表現・文型の確認に対応しています。")
+    st.info("総合分析で過去曲との重複と登録ルールを一度に確認できます。指摘の除外と分析履歴にも対応しています。")
     if "pending_song" in st.session_state:
         st.session_state["selected_song"] = st.session_state.pop("pending_song")
         st.session_state["search"] = ""
@@ -50,6 +53,7 @@ def main():
     song = by_id.get(selected, {})
     corpus = library.comparison_corpus()
     comparison_options = {item.song_id: item for item in corpus if item.song_id != selected}
+    history = HistoryStore(library)
     with st.form(f"song-{selected}"):
         title = st.text_input("曲名", value=song.get("title", ""))
         theme = st.text_input("テーマ", value=song.get("theme", ""))
@@ -75,6 +79,22 @@ def main():
         end_date = st.date_input("登録日・終了（任意、日本時間）", value=None, key="comparison_end")
         submitted_comparison = st.form_submit_button("過去曲と比較", key="compare")
         submitted_detection = st.form_submit_button("定型表現を確認", key="detect")
+        submitted_report = st.form_submit_button("総合分析して履歴に保存", key="report")
+        st.caption("総合分析は未保存の歌詞も分析履歴に保存します。単語・比較・定型表現の個別確認は履歴に保存しません。")
+    if submitted_report:
+        try:
+            comparison = cached_comparison(lyrics, corpus, selected, tuple(comparison_ids), start_date, end_date, include_unknown_tags)
+            detection = cached_detection(lyrics, library.list_rules(), include_unknown_tags)
+            settings = {"selected_ids": comparison_ids, "start_date": start_date.isoformat() if start_date else None,
+                        "end_date": end_date.isoformat() if end_date else None, "include_unknown_tags": include_unknown_tags,
+                        "thresholds": {"min_songs": 3, "min_ratio": 0.2, "small_corpus": 10, "reference_songs": 2}}
+            report = build_report(lyrics, comparison, detection, settings)
+            run_id = history.save(report, title, selected)
+        except (ValueError, RuntimeError, OSError, sqlite3.Error) as error:
+            st.error(f"総合分析を保存できませんでした：{error}")
+        else:
+            st.session_state["current_report"] = run_id
+            st.success("総合分析を履歴に保存しました。")
     if submitted_detection:
         try:
             detection = cached_detection(lyrics, library.list_rules(), include_unknown_tags)
@@ -108,6 +128,10 @@ def main():
     stored_detection = st.session_state.get("detection_result")
     if stored_detection is not None and stored_detection[0] == selected:
         detection_panel(stored_detection[1])
+    if st.session_state.get("current_report"):
+        current_report = history.get(st.session_state["current_report"])
+        if current_report and current_report["song_id"] == selected:
+            report_panel(history, current_report, f"current-{current_report['id']}", editable=True)
     if preview:
         st.subheader("解析の下準備")
         st.caption("セクションタグは集計対象から除外します。本文中のブラケットは保持します。")
@@ -120,12 +144,15 @@ def main():
             for revision in library.revisions(selected):
                 st.caption(f"改訂 {revision['revision_number']} / {revision['created_at']}")
                 st.text(revision["lyrics_raw"])
+        st.caption(f"この曲を削除すると、入力・比較元に含む分析履歴{history.related_count(selected)}件と曲単位の除外設定も削除します。")
         confirmed = st.checkbox("この曲とすべての改訂履歴を削除する", key=f"delete-confirm-{selected}")
         if st.button("曲を削除", disabled=not confirmed):
             library.delete(selected)
             st.rerun()
     transfer_panel(library)
     rule_editor(library)
+    exclusion_panel(history)
+    history_panel(history)
     st.caption(f"保存先：{library.path}")
 
 

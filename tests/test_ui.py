@@ -162,3 +162,34 @@ def test_add_custom_rule_and_reject_empty_rule(tmp_path, monkeypatch):
     assert app.success
     assert len(Library(tmp_path / "library.db").list_rules()) == 6
 
+
+def test_integrated_report_exclude_restore_and_history(tmp_path, monkeypatch):
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    library = Library(tmp_path / "library.db")
+    library.save("過去A", "記憶がほどけていく")
+    library.save("過去B", "記憶がほどけていく")
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("記憶がほどけていく")
+    app.button(key="report").click().run()
+    assert not app.exception
+    store = HistoryStore(library)
+    run_id = app.session_state["current_report"]
+    prefix = f"current-{run_id}"
+    assert len(store.list_runs()) == 1
+    assert "＋登録ルール" in app.dataframe[0].value.iloc[0]["種類"]
+    app.text_input(key=f"{prefix}-reason").set_value("意図した表現")
+    app.button(key=f"{prefix}-exclude").click().run()
+    assert not app.exception
+    assert any(item["enabled"] for item in store.list_exclusions())
+    app.checkbox(key="manage_exclusions").check().run()
+    app.button(key="restore").click().run()
+    assert not app.exception
+    assert not any(item["enabled"] for item in store.list_exclusions())
+    reopened = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    reopened.checkbox(key="show_history").check().run()
+    assert not reopened.exception
+    assert any("統合した分析結果" == item.value for item in reopened.subheader)
+    assert len(library.list_songs()) == 2
+

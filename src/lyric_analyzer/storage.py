@@ -22,6 +22,14 @@ MIGRATIONS = (
     (
         "CREATE TABLE expression_rules (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('literal','abstract_loss')), pattern_json TEXT NOT NULL, reason TEXT NOT NULL, review_hint TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), version INTEGER NOT NULL CHECK(version > 0))",
     ),
+    (
+        "CREATE TABLE analysis_runs (id TEXT PRIMARY KEY, target_song_id TEXT REFERENCES songs(id) ON DELETE CASCADE, target_revision_id TEXT REFERENCES song_revisions(id) ON DELETE CASCADE, payload_json TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE analysis_sources (run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE, song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE, revision_id TEXT NOT NULL REFERENCES song_revisions(id) ON DELETE CASCADE, PRIMARY KEY(run_id, song_id))",
+        "CREATE INDEX analysis_sources_song ON analysis_sources(song_id)",
+        "CREATE TABLE exclusions (id TEXT PRIMARY KEY, scope TEXT NOT NULL CHECK(scope IN ('run','song','global')), song_id TEXT REFERENCES songs(id) ON DELETE CASCADE, run_id TEXT REFERENCES analysis_runs(id) ON DELETE CASCADE, expression_key TEXT NOT NULL, finding_kind TEXT NOT NULL CHECK(finding_kind IN ('phrase','word')), reason TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), created_at TEXT NOT NULL, CHECK((scope='run' AND run_id IS NOT NULL AND song_id IS NULL) OR (scope='song' AND song_id IS NOT NULL AND run_id IS NULL) OR (scope='global' AND song_id IS NULL AND run_id IS NULL)))",
+        "CREATE INDEX analysis_runs_target ON analysis_runs(target_song_id)",
+        "CREATE TRIGGER delete_related_analysis BEFORE DELETE ON songs BEGIN DELETE FROM analysis_runs WHERE target_song_id=OLD.id OR id IN (SELECT run_id FROM analysis_sources WHERE song_id=OLD.id); END",
+    ),
 )
 
 
