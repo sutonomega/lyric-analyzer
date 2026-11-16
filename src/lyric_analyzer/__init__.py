@@ -1,0 +1,1 @@
+"""Local lyrics analysis application."""
