@@ -17,6 +17,7 @@ from lyric_analyzer.folder_ui import folder_panel
 from lyric_analyzer.review_summary_ui import summary_panel
 from lyric_analyzer.library_vocabulary_ui import vocabulary_panel
 from lyric_analyzer.trends_ui import trends_panel
+from lyric_analyzer.date_batch_ui import date_batch_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -49,6 +50,8 @@ def main():
         st.session_state["search"] = ""
     if "notice" in st.session_state:
         st.success(st.session_state.pop("notice"))
+    for song_id in st.session_state.pop("pending_date_refresh", []):
+        st.session_state.pop(f"composed-on-{song_id}", None)
     query = st.text_input("ライブラリを検索（タグも対象）", key="search")
     songs = library.list_songs(query)
     by_id = {song["id"]: song for song in songs}
@@ -168,6 +171,7 @@ def main():
     transfer_panel(library)
     vocabulary_panel(library, corpus)
     trends_panel(library, corpus)
+    date_batch_panel(library)
     rule_editor(library)
     exclusion_panel(history)
     summary_panel(history)

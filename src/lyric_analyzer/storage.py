@@ -225,3 +225,28 @@ class Library:
     def delete(self, song_id):
         with self.connection() as connection:
             connection.execute("DELETE FROM songs WHERE id=?", (song_id,))
+
+    def update_composition_dates(self, changes):
+        if not isinstance(changes, list) or not 1 <= len(changes) <= 2000:
+            raise ValueError("変更する曲は1〜2,000曲で指定してください。")
+        ids = set()
+        for change in changes:
+            if (not isinstance(change, dict) or set(change) != {"song_id", "before", "after", "updated_at", "title"}
+                    or any(not isinstance(value, str) for value in change.values())
+                    or not change["song_id"] or change["song_id"] in ids):
+                raise ValueError("変更する曲と日付の形式を確認してください。")
+            ids.add(change["song_id"])
+            validate_composed_on(change["before"])
+            validate_composed_on(change["after"])
+            if change["before"] == change["after"]:
+                raise ValueError("変更のある曲だけを指定してください。")
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for change in changes:
+                row = connection.execute("SELECT title,composed_on,updated_at FROM songs WHERE id=?", (change["song_id"],)).fetchone()
+                if row is None or tuple(row) != (change["title"], change["before"], change["updated_at"]):
+                    raise ValueError("曲が変更または削除されています。一覧を読み直して確認してください。変更は保存していません。")
+            timestamp = self.now()
+            for change in changes:
+                connection.execute("UPDATE songs SET composed_on=?,updated_at=? WHERE id=?", (change["after"], timestamp, change["song_id"]))
+        return len(changes)
