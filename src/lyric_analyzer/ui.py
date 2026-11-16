@@ -6,11 +6,17 @@ from lyric_analyzer.storage import Library, default_database_path
 from lyric_analyzer.transfer import validate_archive
 from lyric_analyzer.analysis.parsing import analysis_segments, normalize_with_offsets, parse_lines
 from lyric_analyzer.analysis.frequency import analyze
+from lyric_analyzer.analysis.comparison import collapse_contained, compare
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
 def cached_analysis(lyrics, include_unknown_tags):
     return analyze(lyrics, include_unknown_tags)
+
+
+@st.cache_data(max_entries=20, show_spinner="過去曲との重複を調べています…")
+def cached_comparison(lyrics, corpus, target_song_id, selected_ids, start_date, end_date, include_unknown_tags):
+    return compare(lyrics, corpus, target_song_id, selected_ids, start_date, end_date, include_unknown_tags)
 
 
 def main():
@@ -22,7 +28,7 @@ def main():
     except (OSError, sqlite3.Error, ValueError) as error:
         st.error(f"保存先を開けませんでした：{error}")
         st.stop()
-    st.info("単語・フレーズの集計に対応しました。過去曲との重複・定型表現の検出は今後追加します。")
+    st.info("単語・フレーズ集計と過去曲との重複比較に対応しました。定型表現の検出は今後追加します。")
     if "pending_song" in st.session_state:
         st.session_state["selected_song"] = st.session_state.pop("pending_song")
         st.session_state["search"] = ""
@@ -35,6 +41,8 @@ def main():
         st.session_state["selected_song"] = None
     selected = st.selectbox("編集する曲", [None, *by_id], format_func=lambda key: "新しい曲" if key is None else by_id[key]["title"], key="selected_song")
     song = by_id.get(selected, {})
+    corpus = library.comparison_corpus()
+    comparison_options = {item.song_id: item for item in corpus if item.song_id != selected}
     with st.form(f"song-{selected}"):
         title = st.text_input("曲名", value=song.get("title", ""))
         theme = st.text_input("テーマ", value=song.get("theme", ""))
@@ -52,6 +60,21 @@ def main():
         preview = st.form_submit_button("行・セクションを確認")
         include_unknown_tags = st.checkbox("未知のセクションタグも集計する", key=f"unknown-tags-{selected}")
         submitted_analysis = st.form_submit_button("単語・フレーズを分析", key="analyze")
+        st.caption("比較する曲は各曲の最新版です。編集中の曲は自動で除外します。")
+        comparison_ids = st.multiselect("比較対象の曲", list(comparison_options), default=list(comparison_options),
+                                        format_func=lambda song_id: f"{comparison_options[song_id].title}（{song_id[:8]}）",
+                                        key=f"comparison-songs-{selected}")
+        start_date = st.date_input("登録日・開始（任意、日本時間）", value=None, key="comparison_start")
+        end_date = st.date_input("登録日・終了（任意、日本時間）", value=None, key="comparison_end")
+        submitted_comparison = st.form_submit_button("過去曲と比較", key="compare")
+    if submitted_comparison:
+        try:
+            comparison = cached_comparison(lyrics, corpus, selected, tuple(comparison_ids), start_date, end_date, include_unknown_tags)
+        except (ValueError, RuntimeError, OSError) as error:
+            st.session_state.pop("comparison_result", None)
+            st.error(f"比較できませんでした：{error}")
+        else:
+            st.session_state["comparison_result"] = (selected, lyrics, comparison)
     if submitted_analysis:
         try:
             result = cached_analysis(lyrics, include_unknown_tags)
@@ -63,6 +86,9 @@ def main():
     stored = st.session_state.get("analysis_result")
     if stored is not None and stored[0] == selected:
         frequency_panel(stored[1], stored[2])
+    stored_comparison = st.session_state.get("comparison_result")
+    if stored_comparison is not None and stored_comparison[0] == selected:
+        comparison_panel(stored_comparison[1], stored_comparison[2])
     if preview:
         st.subheader("解析の下準備")
         st.caption("セクションタグは集計対象から除外します。本文中のブラケットは保持します。")
@@ -108,6 +134,61 @@ def frequency_panel(lyrics, result):
         st.caption(f"{item.line_number}行目 / {item.section or 'セクションなし'}")
         st.text(item.line_text)
         st.text(f"該当表記：{lyrics[item.start:item.end]}")
+
+
+def comparison_panel(lyrics, result):
+    st.subheader("過去曲との重複")
+    st.caption(f"比較対象：{len(result.corpus)}曲。最後に比較した歌詞・対象曲の最新版を表示しています。編集・曲追加・条件変更後は再比較してください。")
+    st.caption("使用曲数は曲IDごとに1曲、過去曲の出現回数はサビの反復も含みます。未保存の歌詞でも比較でき、比較だけでは保存されません。")
+    if result.duplicate_song_ids:
+        titles = [song.title for song in result.corpus if song.song_id in result.duplicate_song_ids]
+        st.warning(f"歌詞全文が同じ別曲があります：{'、'.join(titles)}。比較曲数には含めています。必要なら比較対象から外してください。")
+    if not result.corpus:
+        st.info("比較対象の曲がありません。過去曲を登録するか、対象曲・登録日の条件を確認してください。")
+        return
+    if len(result.corpus) < 10:
+        st.caption("比較曲が10曲未満のため、頻出の判定は参考情報です。2曲以上の一致を「参考（母数少）」と表示します。")
+    else:
+        st.caption("フレーズは3曲以上かつ比較曲の20%以上で使われている場合に「頻出」と表示します。単語は参考情報です。")
+    mode = st.selectbox("比較の種類", ["フレーズ（原文一致）", "フレーズ（全角・半角を統一）", "単語（原形）"], key="comparison_mode")
+    rows = {"フレーズ（原文一致）": result.phrases_surface, "フレーズ（全角・半角を統一）": result.phrases_normalized,
+            "単語（原形）": result.words}[mode]
+    show_nested = st.checkbox("長い一致に含まれる短い一致も表示", key="comparison_nested")
+    if not show_nested and mode != "単語（原形）":
+        rows = collapse_contained(rows)
+    if not rows:
+        st.info("この条件で一致する語句はありません。")
+        return
+    displayed = rows[:50]
+    st.caption(f"一致{len(rows)}種類中、上位{len(displayed)}件を表示。短い一致は同じ出現箇所を含む長い一致にまとめます。")
+    st.dataframe([{"語句": item.expression, "区分": item.status, "使用曲数": item.song_count,
+                   "比較曲数": len(result.corpus), "過去曲の出現回数": item.count,
+                   "入力中の出現回数": len(item.target_occurrences)} for item in displayed],
+                 hide_index=True, alt="過去曲と一致する表現の使用曲数と出現回数", key="comparison_table")
+    index = st.selectbox("重複箇所を確認", range(len(displayed)), format_func=lambda number: displayed[number].expression,
+                         key=f"comparison-detail-{mode}-{show_nested}")
+    match = displayed[index]
+    st.caption("入力中の歌詞")
+    for occurrence in match.target_occurrences:
+        st.text(f"{occurrence.line_number}行目：{occurrence.line_text}")
+        st.text(f"該当表記：{lyrics[occurrence.start:occurrence.end]}")
+    snapshots = {song.song_id: song for song in result.corpus}
+    st.caption("過去曲の該当箇所（比較した時点の改訂）")
+    for evidence in match.evidence:
+        song = snapshots[evidence.song_id]
+        item = evidence.occurrence
+        st.text(f"{song.title} / 改訂{song.revision_number} / {item.line_number}行目：{item.line_text}")
+        st.text(f"該当表記：{song.lyrics[item.start:item.end]}")
+    source_ids = sorted({item.song_id for item in match.evidence})
+    source_id = st.selectbox("引用元の歌詞を開く", source_ids,
+                             format_func=lambda song_id: f"{snapshots[song_id].title}（{song_id[:8]}）",
+                             key=f"comparison-source-{mode}-{index}-{show_nested}")
+    source = snapshots[source_id]
+    matching_lines = {item.occurrence.line_number for item in match.evidence if item.song_id == source_id}
+    with st.expander(f"引用元全文：{source.title} / 改訂{source.revision_number}"):
+        for line in parse_lines(source.lyrics):
+            marker = "▶" if line.line_number in matching_lines else " "
+            st.text(f"{marker} {line.line_number}：{line.text}")
 
 
 def transfer_panel(library):

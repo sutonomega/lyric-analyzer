@@ -115,6 +115,13 @@ class Library:
                 songs.append(song)
         return json.dumps({"schema_version": 1, "songs": songs}, ensure_ascii=False, indent=2)
 
+    def comparison_corpus(self):
+        from lyric_analyzer.analysis.comparison import SongSnapshot
+
+        with self.connection() as connection:
+            rows = connection.execute("SELECT songs.id AS song_id, songs.title, songs.created_at, song_revisions.id AS revision_id, revision_number, lyrics_raw, content_hash FROM songs JOIN song_revisions ON song_revisions.song_id=songs.id WHERE revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.id").fetchall()
+            return tuple(SongSnapshot(row["song_id"], row["title"], row["revision_id"], row["revision_number"], row["lyrics_raw"], row["content_hash"], row["created_at"]) for row in rows)
+
     def import_json(self, content, conflict="skip"):
         from lyric_analyzer.transfer import validate_archive
 
