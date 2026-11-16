@@ -7,6 +7,8 @@ from lyric_analyzer.transfer import validate_archive
 from lyric_analyzer.analysis.parsing import analysis_segments, normalize_with_offsets, parse_lines
 from lyric_analyzer.analysis.frequency import analyze
 from lyric_analyzer.analysis.comparison import collapse_contained, compare
+from lyric_analyzer.analysis.expressions import detect
+from lyric_analyzer.expression_ui import detection_panel, rule_editor
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -19,6 +21,11 @@ def cached_comparison(lyrics, corpus, target_song_id, selected_ids, start_date, 
     return compare(lyrics, corpus, target_song_id, selected_ids, start_date, end_date, include_unknown_tags)
 
 
+@st.cache_data(max_entries=20, show_spinner="定型表現と文型を確認しています…")
+def cached_detection(lyrics, rules, include_unknown_tags):
+    return detect(lyrics, rules, include_unknown_tags)
+
+
 def main():
     st.set_page_config(page_title="Lyric Analyzer", page_icon="🎵")
     st.title("Lyric Analyzer")
@@ -28,7 +35,7 @@ def main():
     except (OSError, sqlite3.Error, ValueError) as error:
         st.error(f"保存先を開けませんでした：{error}")
         st.stop()
-    st.info("単語・フレーズ集計と過去曲との重複比較に対応しました。定型表現の検出は今後追加します。")
+    st.info("単語・フレーズ集計、過去曲比較、登録ルールによる定型表現・文型の確認に対応しています。")
     if "pending_song" in st.session_state:
         st.session_state["selected_song"] = st.session_state.pop("pending_song")
         st.session_state["search"] = ""
@@ -67,6 +74,15 @@ def main():
         start_date = st.date_input("登録日・開始（任意、日本時間）", value=None, key="comparison_start")
         end_date = st.date_input("登録日・終了（任意、日本時間）", value=None, key="comparison_end")
         submitted_comparison = st.form_submit_button("過去曲と比較", key="compare")
+        submitted_detection = st.form_submit_button("定型表現を確認", key="detect")
+    if submitted_detection:
+        try:
+            detection = cached_detection(lyrics, library.list_rules(), include_unknown_tags)
+        except (ValueError, RuntimeError, OSError, sqlite3.Error) as error:
+            st.session_state.pop("detection_result", None)
+            st.error(f"確認できませんでした：{error}")
+        else:
+            st.session_state["detection_result"] = (selected, detection)
     if submitted_comparison:
         try:
             comparison = cached_comparison(lyrics, corpus, selected, tuple(comparison_ids), start_date, end_date, include_unknown_tags)
@@ -89,6 +105,9 @@ def main():
     stored_comparison = st.session_state.get("comparison_result")
     if stored_comparison is not None and stored_comparison[0] == selected:
         comparison_panel(stored_comparison[1], stored_comparison[2])
+    stored_detection = st.session_state.get("detection_result")
+    if stored_detection is not None and stored_detection[0] == selected:
+        detection_panel(stored_detection[1])
     if preview:
         st.subheader("解析の下準備")
         st.caption("セクションタグは集計対象から除外します。本文中のブラケットは保持します。")
@@ -106,6 +125,7 @@ def main():
             library.delete(selected)
             st.rerun()
     transfer_panel(library)
+    rule_editor(library)
     st.caption(f"保存先：{library.path}")
 
 

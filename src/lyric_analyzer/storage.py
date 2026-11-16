@@ -19,6 +19,9 @@ MIGRATIONS = (
         "CREATE TABLE song_tags (song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(song_id, tag_id))",
         "CREATE INDEX song_tags_tag ON song_tags(tag_id)",
     ),
+    (
+        "CREATE TABLE expression_rules (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('literal','abstract_loss')), pattern_json TEXT NOT NULL, reason TEXT NOT NULL, review_hint TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), version INTEGER NOT NULL CHECK(version > 0))",
+    ),
 )
 
 
@@ -56,6 +59,12 @@ class Library:
                 if version not in versions:
                     for statement in statements:
                         connection.execute(statement)
+                    if version == 3:
+                        from lyric_analyzer.analysis.expressions import default_rules
+
+                        for rule in default_rules():
+                            connection.execute("INSERT INTO expression_rules VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                               (rule.id, rule.kind, rule.pattern_json, rule.reason, rule.review_hint, int(rule.enabled), rule.version))
                     connection.execute("INSERT INTO schema_migrations VALUES (?, ?)", (version, self.now()))
 
     @staticmethod
@@ -148,6 +157,32 @@ class Library:
     def revisions(self, song_id):
         with self.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM song_revisions WHERE song_id=? ORDER BY revision_number DESC", (song_id,))]
+
+    def list_rules(self):
+        from lyric_analyzer.analysis.expressions import ExpressionRule
+
+        with self.connection() as connection:
+            return tuple(ExpressionRule(row["id"], row["kind"], row["pattern_json"], row["reason"], row["review_hint"], bool(row["enabled"]), row["version"])
+                         for row in connection.execute("SELECT * FROM expression_rules ORDER BY kind, id"))
+
+    def save_rule(self, kind, pattern, reason, review_hint, enabled=True, rule_id=None, expected_version=None):
+        from lyric_analyzer.analysis.expressions import validate_rule
+
+        pattern_json = validate_rule(kind, pattern, reason, review_hint, enabled)
+        values = (kind, pattern_json, reason.strip(), review_hint.strip(), int(enabled))
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if rule_id is None:
+                rule_id = str(uuid4())
+                connection.execute("INSERT INTO expression_rules VALUES (?, ?, ?, ?, ?, ?, 1)", (rule_id, *values))
+            else:
+                existing = connection.execute("SELECT * FROM expression_rules WHERE id=?", (rule_id,)).fetchone()
+                if existing is None or existing["version"] != expected_version:
+                    raise ValueError("辞書が変更されたか見つかりません。画面を更新して確認してください。")
+                previous = tuple(existing[key] for key in ("kind", "pattern_json", "reason", "review_hint", "enabled"))
+                if previous != values:
+                    connection.execute("UPDATE expression_rules SET kind=?, pattern_json=?, reason=?, review_hint=?, enabled=?, version=version+1 WHERE id=?", (*values, rule_id))
+        return rule_id
 
     def delete(self, song_id):
         with self.connection() as connection:

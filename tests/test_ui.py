@@ -120,3 +120,45 @@ def test_compare_excludes_current_song_and_rejects_invalid_period(tmp_path, monk
     assert not app.exception
     assert any("開始日は終了日以前" in item.value for item in app.error)
 
+
+def test_detect_and_edit_rule_then_recheck(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("記憶がほどけていく")
+    app.button(key="detect").click().run()
+    assert not app.exception
+    assert len(app.session_state["detection_result"][1].findings) == 2
+    assert any("見直しの観点：" in item.value for item in app.text)
+    library = Library(tmp_path / "library.db")
+    rule = next(item for item in library.list_rules() if json.loads(item.pattern_json).get("text") == "ほどけていく")
+    app.checkbox(key="show_rule_editor").check().run()
+    app.selectbox(key="selected_rule").select(rule.id).run()
+    app.checkbox(key=f"rule-enabled-{rule.id}-1").uncheck()
+    app.button(key="save_rule").click().run()
+    assert not app.exception
+    assert app.success
+    app.button(key="detect").click().run()
+    assert not app.exception
+    result = app.session_state["detection_result"][1]
+    assert len(result.findings) == 1
+    assert result.findings[0].match_kind == "文型候補"
+    assert len(library.list_songs()) == 0
+
+
+def test_add_custom_rule_and_reject_empty_rule(tmp_path, monkeypatch):
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.checkbox(key="show_rule_editor").check().run()
+    app.button(key="save_rule").click().run()
+    assert not app.exception
+    assert app.error
+    app.text_input(key="rule-text-None-0").set_value("駅の時計")
+    app.text_area(key="rule-reason-None-0").set_value("よく使う情景")
+    app.text_area(key="rule-hint-None-0").set_value("別の物から時間を描く")
+    app.button(key="save_rule").click().run()
+    assert not app.exception
+    assert app.success
+    assert len(Library(tmp_path / "library.db").list_rules()) == 6
+
