@@ -66,7 +66,38 @@ def test_saved_snapshot_survives_restart_and_changes(tmp_path):
     assert reopened.get(run_id) == saved
     assert reopened.list_runs()[0]["title"] == "未保存の検証"
     assert saved["input_hash"] == report["input_hash"]
-    assert saved["versions"]["report"] == "report-1"
+    assert saved["versions"]["report"] == "report-2"
+
+
+def test_grammatical_phrases_are_reference_but_content_and_rules_remain(tmp_path):
+    library = Library(tmp_path / "library.db")
+    for index in range(3):
+        library.save(str(index), "して\nていく\nないまま\n夜の駅\nほどけていく")
+    report = report_for(library, "して\nていく\nないまま\n夜の駅\nほどけていく")
+    grammar = [row for row in report["findings"] if row["surface"] in {"して", "ていく", "ないまま"} and row["kind"] == "phrase"]
+    assert grammar
+    assert all(row["priority"] == 5 for row in grammar)
+    assert all(row["priority"] == 5 for row in report["findings"] if row["kind"] == "word" and row["expression_key"] == "する")
+    assert any(row["priority"] == 1 and row["surface"] == "夜の駅" for row in report["findings"])
+    assert any(row["rules"] and row["priority"] < 5 for row in report["findings"])
+    library.save_rule("literal", {"text": "して"}, "意図した監視", "文脈を確認", True)
+    updated = report_for(library, "して")
+    assert any(row["rules"] and row["priority"] < 5 for row in updated["findings"])
+
+
+def test_grouping_preserves_occurrences_and_deduplicates_evidence(tmp_path):
+    from lyric_analyzer.analysis.report import group_evidence, group_findings
+
+    library, _ = prepare(tmp_path)
+    report = report_for(library, "記憶がほどけていく\n記憶がほどけていく")
+    original = json.dumps(report, ensure_ascii=False)
+    groups = group_findings(report["findings"])
+    assert len(groups) < len(report["findings"])
+    first = groups[0]
+    assert len(first) == 2
+    assert {row["line_number"] for row in first} == {1, 2}
+    assert group_evidence(report, first) == (2, 3)
+    assert json.dumps(report, ensure_ascii=False) == original
 
 
 @pytest.mark.parametrize("scope", ["run", "song", "global"])

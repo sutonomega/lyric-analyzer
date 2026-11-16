@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from lyric_analyzer.analysis.report import exclusion_for
+from lyric_analyzer.analysis.report import exclusion_for, group_evidence, group_findings
 
 
 def report_panel(store, report, prefix, editable=False):
@@ -16,25 +16,38 @@ def report_panel(store, report, prefix, editable=False):
     current = editable or st.checkbox("現在の除外設定で表示", key=f"{prefix}-current")
     exclusions = store.list_exclusions() if current else report["exclusions"]
     show_excluded = st.checkbox("除外した指摘も表示", key=f"{prefix}-show-excluded")
+    show_grammar = st.checkbox("文法的な表現の参考情報も表示", key=f"{prefix}-show-grammar")
     rows = [(item, exclusion_for(item, report, exclusions)) for item in report["findings"]]
-    visible = [(item, exclusion) for item, exclusion in rows if show_excluded or exclusion is None]
+    visible = [(item, exclusion) for item, exclusion in rows
+               if (show_excluded or exclusion is None) and (show_grammar or item["priority"] != 5)]
+    groups = group_findings([item for item, _ in visible])
     st.caption(f"全{len(rows)}件 / 除外{sum(exclusion is not None for _, exclusion in rows)}件。履歴の通常表示は保存時の除外設定です。")
+    st.caption("同じ種類・表現は1行にまとめます。文法的な表現は通常表示から外し、登録ルールに一致した表現は優先して残します。過去の履歴の順位は保存時のままです。")
     if report["duplicate_song_ids"]:
         st.warning("歌詞全文が同じ別曲が比較対象に含まれています。使用曲数は別々に数えています。")
     if not visible:
         st.info("表示する指摘はありません。除外設定や比較条件を確認できます。")
     else:
-        displayed = visible[:50]
-        st.caption(f"上位{len(displayed)}件を表示。回数は除外・表示件数によって変えません。入力回数は同じ表現・種類の出現数、異なる本文行数は同じ本文の行をまとめた数です。")
-        st.dataframe([{"表現": item["surface"], "種類": item["category"], "行": item["line_number"],
-                       "使用曲数": item["song_count"], "過去出現回数": item["past_count"],
+        displayed_groups = groups[:50]
+        displayed = [(group[0], exclusion_for(group[0], report, exclusions)) for group in displayed_groups]
+        st.caption(f"表示対象{len(groups)}表現のうち上位{len(displayed)}表現を表示。入力回数と異なる本文行数は保存時の全出現から数えます。使用曲数・過去出現回数は表示対象の各表現の根拠を重複せず集計します。")
+        st.dataframe([{"表現": item["surface"], "種類": item["category"], "行": ", ".join(str(n) for n in sorted({row["line_number"] for row in group})),
+                       "使用曲数": group_evidence(report, group)[0], "過去出現回数": group_evidence(report, group)[1],
                        "入力回数": item["input_count"], "異なる本文行数": item["unique_line_count"],
-                       "除外理由": exclusion["reason"] if exclusion else ""} for item, exclusion in displayed],
+                       "除外理由": exclusion["reason"] if exclusion else ""} for group, (item, exclusion) in zip(displayed_groups, displayed)],
                      hide_index=True, alt="重複と登録ルールの根拠を統合した指摘一覧")
         finding_id = st.selectbox("統合指摘の詳細", [item["id"] for item, _ in displayed],
                                   format_func=lambda value: next(f"{item['line_number']}行目：{item['surface']} / {item['category']}" for item, _ in displayed if item["id"] == value),
                                   key=f"{prefix}-detail")
         finding, exclusion = next((item, exclusion) for item, exclusion in displayed if item["id"] == finding_id)
+        selected_group = next(group for group in displayed_groups if group[0]["id"] == finding_id)
+        if len(selected_group) > 1:
+            occurrence_id = st.selectbox("表現の出現箇所", [item["id"] for item in selected_group],
+                                         format_func=lambda value: next(f"{item['line_number']}行目：{item['surface']}（位置{item['start']}）" for item in selected_group if item["id"] == value),
+                                         key=f"{prefix}-occurrence-{finding_id}")
+            finding = next(item for item in selected_group if item["id"] == occurrence_id)
+            exclusion = exclusion_for(finding, report, exclusions)
+            finding_id = finding["id"]
         st.text(finding["line_text"])
         st.text(f"該当表記：{finding['surface']}")
         for rule_finding in finding["rules"]:
@@ -76,13 +89,16 @@ def report_panel(store, report, prefix, editable=False):
 def review_panel(store, report, prefix):
     if not st.checkbox("上位指摘の有用性を評価", key=f"{prefix}-review"):
         return
-    candidates = report["findings"][:10]
+    grouped_review = report["versions"]["report"] != "report-1"
+    candidates = ([group[0] for group in group_findings([item for item in report["findings"] if item["priority"] != 5])][:10]
+                  if grouped_review else report["findings"][:10])
     if not candidates:
         st.info("評価する指摘がありません。")
         return
     saved = store.reviews(report["id"])
     labels = {None: "未評価", "useful": "有用", "intentional": "意図的な表現", "false_positive": "誤検出"}
-    st.caption("保存時の上位最大10件を評価します。同じ表現の別の出現箇所も1件ずつ数えます。自作サンプルと実歌詞の評価は区別してください。")
+    st.caption("保存時の上位最大10表現を評価します。文法的な参考情報を除き、同じ種類・表現は1件として数えます。" if grouped_review
+               else "旧版の評価です。保存時の上位最大10件を出現箇所ごとに数えます。")
     with st.form(f"{prefix}-reviews"):
         reviews = []
         for number, item in enumerate(candidates, start=1):

@@ -240,6 +240,66 @@ def test_review_form_persists_classification(tmp_path, monkeypatch):
     assert any("有用率 0%" in item.value for item in app.text)
 
 
+def test_report_groups_occurrences_and_can_show_grammatical_references(tmp_path, monkeypatch):
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    library = Library(tmp_path / "library.db")
+    for number in range(3):
+        library.save(str(number), "夜の駅\nして")
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("夜の駅\n夜の駅\nして")
+    app.button(key="report").click().run()
+    assert not app.exception
+    run_id = app.session_state["current_report"]
+    prefix = f"current-{run_id}"
+    frame = app.dataframe[0].value
+    assert not any(frame["種類"] == "文法的な表現（参考）")
+    phrase = frame[frame["表現"] == "夜の駅"]
+    assert len(phrase) == 1
+    assert phrase.iloc[0]["行"] == "1, 2"
+    assert phrase.iloc[0]["過去出現回数"] == 3
+    first_id = app.selectbox(key=f"{prefix}-detail").value
+    occurrence = app.selectbox(key=f"{prefix}-occurrence-{first_id}")
+    occurrence.select(occurrence.options[1]).run()
+    assert not app.exception
+    app.checkbox(key=f"{prefix}-show-grammar").check().run()
+    assert any(app.dataframe[0].value["種類"] == "文法的な表現（参考）")
+    app.checkbox(key=f"{prefix}-review").check().run()
+    labels = [widget for widget in app.selectbox if widget.key and widget.key.startswith(f"{prefix}-review-label-")]
+    report = HistoryStore(library).get(run_id)
+    ids = {widget.key.removeprefix(f"{prefix}-review-label-") for widget in labels}
+    candidates = [item for item in report["findings"] if item["id"] in ids]
+    assert len({(item["kind"], item["expression_key"]) for item in candidates}) == len(candidates)
+    assert all(item["priority"] != 5 for item in candidates)
+
+
+def test_old_report_reviews_keep_occurrence_based_candidates(tmp_path, monkeypatch):
+    from lyric_analyzer.analysis.comparison import compare
+    from lyric_analyzer.analysis.expressions import detect
+    from lyric_analyzer.analysis.report import build_report
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    library = Library(tmp_path / "library.db")
+    raw = "心の奥で\n心の奥で"
+    report = build_report(raw, compare(raw, ()), detect(raw, library.list_rules()), {})
+    report["versions"]["report"] = "report-1"
+    store = HistoryStore(library)
+    run_id = store.save(report, "旧版の履歴")
+    second_id = report["findings"][1]["id"]
+    store.save_reviews(run_id, [{"finding_id": second_id, "label": "useful", "note": "旧版で保存"}])
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.checkbox(key="show_history").check().run()
+    prefix = f"history-{run_id}"
+    app.checkbox(key=f"{prefix}-review").check().run()
+    assert not app.exception
+    labels = [widget for widget in app.selectbox if widget.key and widget.key.startswith(f"{prefix}-review-label-")]
+    assert len(labels) == 2
+    assert app.selectbox(key=f"{prefix}-review-label-{second_id}").value == "useful"
+    assert any("旧版の評価" in item.value for item in app.caption)
+
+
 def test_import_folder_path_and_styles_editor(tmp_path, monkeypatch, caplog):
     from lyric_analyzer.folder_ui import TEMPLATE
 
