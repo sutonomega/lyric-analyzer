@@ -16,6 +16,7 @@ from lyric_analyzer.backup_ui import backup_panel
 from lyric_analyzer.folder_ui import folder_panel
 from lyric_analyzer.review_summary_ui import summary_panel
 from lyric_analyzer.library_vocabulary_ui import vocabulary_panel
+from lyric_analyzer.trends_ui import trends_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -72,9 +73,11 @@ def main():
         tags = st.text_input("タグ（カンマ区切り）", value=", ".join(song.get("tags", [])))
         lyrics = st.text_area("歌詞", value=song.get("lyrics_raw", ""), height=320)
         styles = st.text_area("Styles（曲のスタイル）", value=song.get("styles", ""), height=90, key=f"styles-{selected}")
+        composed_on = st.date_input("制作日（任意・不明なら空欄）", value=song.get("composed_on") or None, min_value="0001-01-01", max_value="9999-12-31", key=f"composed-on-{selected}")
         if st.form_submit_button("保存"):
             try:
-                saved_id = library.save(title, lyrics, theme, selected, tags=tags.split(","), styles=styles)
+                saved_id = library.save(title, lyrics, theme, selected, tags=tags.split(","), styles=styles,
+                                        composed_on=composed_on.isoformat() if composed_on else "")
             except (ValueError, sqlite3.Error) as error:
                 st.error(str(error))
             else:
@@ -164,6 +167,7 @@ def main():
             st.rerun()
     transfer_panel(library)
     vocabulary_panel(library, corpus)
+    trends_panel(library, corpus)
     rule_editor(library)
     exclusion_panel(history)
     summary_panel(history)

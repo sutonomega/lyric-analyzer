@@ -3,6 +3,8 @@ import hashlib
 import json
 from uuid import UUID
 
+from lyric_analyzer.storage import validate_composed_on
+
 
 MAX_ARCHIVE_BYTES = 10 * 1024 * 1024
 
@@ -57,6 +59,8 @@ def validate_archive(content):
         text(song, "theme")
         song.setdefault("styles", "")
         text(song, "styles")
+        song.setdefault("composed_on", "")
+        validate_composed_on(song["composed_on"])
         timestamp(song, "created_at")
         timestamp(song, "updated_at")
         tags = song.get("tags")

@@ -7,7 +7,7 @@ import sqlite3
 from uuid import uuid4
 
 from lyric_analyzer.analysis.expressions import validate_rule
-from lyric_analyzer.storage import MIGRATIONS
+from lyric_analyzer.storage import MIGRATIONS, validate_composed_on
 from lyric_analyzer.local_ai import validate_saved_suggestion
 
 
@@ -89,6 +89,8 @@ def _validate_report(report):
 
 
 def _validate_payloads(connection):
+    for song in connection.execute("SELECT composed_on FROM songs"):
+        validate_composed_on(song["composed_on"])
     for rule in connection.execute("SELECT * FROM expression_rules"):
         validate_rule(rule["kind"], json.loads(rule["pattern_json"]), rule["reason"], rule["review_hint"], bool(rule["enabled"]))
     revisions = {row["id"]: dict(row) for row in connection.execute("SELECT * FROM song_revisions")}
@@ -152,6 +154,8 @@ def validated_backup(content):
                 raise ValueError("テーブルの形式が不正です。")
             if table == "songs" and archive["schema_version"] < 6:
                 rows = [{**row, "styles": ""} if isinstance(row, dict) and "styles" not in row else row for row in rows]
+            if table == "songs" and archive["schema_version"] < 7:
+                rows = [{**row, "composed_on": ""} if isinstance(row, dict) and "composed_on" not in row else row for row in rows]
             if table == "schema_migrations":
                 rows = [*rows, *({"version": version, "applied_at": datetime.now(timezone.utc).isoformat()}
                                  for version in range(archive["schema_version"] + 1, len(MIGRATIONS) + 1))]

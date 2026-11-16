@@ -36,7 +36,24 @@ MIGRATIONS = (
     (
         "ALTER TABLE songs ADD COLUMN styles TEXT NOT NULL DEFAULT ''",
     ),
+    (
+        "ALTER TABLE songs ADD COLUMN composed_on TEXT NOT NULL DEFAULT ''",
+    ),
 )
+
+
+def validate_composed_on(value):
+    from datetime import date
+
+    if not isinstance(value, str):
+        raise ValueError("制作日はYYYY-MM-DD、または不明なら空欄で指定してください。")
+    if value:
+        try:
+            if date.fromisoformat(value).isoformat() != value:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("制作日はYYYY-MM-DDの実在する日付で指定してください。") from None
+    return value
 
 
 def default_database_path():
@@ -85,11 +102,13 @@ class Library:
     def now():
         return datetime.now(timezone.utc).isoformat()
 
-    def save(self, title, lyrics, theme="", song_id=None, tags=None, styles=None):
+    def save(self, title, lyrics, theme="", song_id=None, tags=None, styles=None, composed_on=None):
         if not title.strip() or not lyrics.strip():
             raise ValueError("曲名と歌詞を入力してください。")
         if styles is not None and not isinstance(styles, str):
             raise ValueError("Stylesは文字列で入力してください。")
+        if composed_on is not None:
+            validate_composed_on(composed_on)
         timestamp = self.now()
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -106,6 +125,8 @@ class Library:
                 connection.execute("INSERT INTO song_revisions VALUES (?, ?, ?, ?, ?, ?)", (str(uuid4()), song_id, number, lyrics, hashlib.sha256(lyrics.encode("utf-8")).hexdigest(), timestamp))
             if tags is not None:
                 self.set_tags(connection, song_id, tags)
+            if composed_on is not None:
+                connection.execute("UPDATE songs SET composed_on=? WHERE id=?", (composed_on, song_id))
         return song_id
 
     @staticmethod
@@ -163,6 +184,7 @@ class Library:
                     continue
                 song_id = str(uuid4()) if exists else song["id"]
                 connection.execute("INSERT INTO songs (id,title,theme,created_at,updated_at,styles) VALUES (?, ?, ?, ?, ?, ?)", (song_id, song["title"], song["theme"], song["created_at"], song["updated_at"], song["styles"]))
+                connection.execute("UPDATE songs SET composed_on=? WHERE id=?", (song["composed_on"], song_id))
                 for revision in song["revisions"]:
                     revision_id = str(uuid4()) if exists else revision["id"]
                     connection.execute("INSERT INTO song_revisions VALUES (?, ?, ?, ?, ?, ?)", (revision_id, song_id, revision["revision_number"], revision["lyrics_raw"], revision["content_hash"], revision["created_at"]))

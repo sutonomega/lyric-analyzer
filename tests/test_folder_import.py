@@ -169,13 +169,14 @@ def test_schema_five_backup_can_still_be_restored(tmp_path):
     archive["tables"]["schema_migrations"] = [row for row in archive["tables"]["schema_migrations"] if row["version"] <= 5]
     for song in archive["tables"]["songs"]:
         song.pop("styles")
+        song.pop("composed_on")
     archive["sha256"] = checksum(archive["tables"])
     target = Library(tmp_path / "target.db")
     restore_backup(target, json.dumps(archive).encode(), confirmed=True)
     assert target.list_songs()[0]["title"] == "旧版"
     assert target.list_songs()[0]["styles"] == ""
     with target.connection() as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
 
 
 def test_schema_five_database_upgrade_preserves_existing_data(tmp_path):
