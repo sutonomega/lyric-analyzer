@@ -193,3 +193,49 @@ def test_integrated_report_exclude_restore_and_history(tmp_path, monkeypatch):
     assert any("統合した分析結果" == item.value for item in reopened.subheader)
     assert len(library.list_songs()) == 2
 
+
+def test_backup_preview_confirmation_and_restore(tmp_path, monkeypatch):
+    from lyric_analyzer.backup import export_backup
+
+    source = Library(tmp_path / "source.db")
+    source.save("復元する曲", "心の奥で", tags=["夜"])
+    content = export_backup(source)
+    target_dir = tmp_path / "target"
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(target_dir))
+    target = Library(target_dir / "library.db")
+    target.save("置換前の曲", "朝の駅")
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.checkbox(key="show_backup").check().run()
+    app.button(key="create_backup").click().run()
+    assert not app.exception
+    assert app.session_state["backup_bytes"]
+    app.file_uploader(key="restore_archive").upload("backup.json", content).run()
+    assert not app.exception
+    assert app.button(key="restore_backup").disabled
+    confirmation = next(item for item in app.checkbox if item.key and item.key.startswith("restore-confirm-"))
+    confirmation.check().run()
+    app.button(key="restore_backup").click().run()
+    assert not app.exception
+    assert app.success
+    assert target.list_songs()[0]["title"] == "復元する曲"
+    assert len(list((target_dir / "backups").glob("before-restore-*.json"))) == 1
+
+
+def test_review_form_persists_classification(tmp_path, monkeypatch):
+    from lyric_analyzer.history import HistoryStore
+
+    monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app.text_area[0].set_value("心の奥で")
+    app.button(key="report").click().run()
+    run_id = app.session_state["current_report"]
+    store = HistoryStore(Library(tmp_path / "library.db"))
+    finding_id = store.get(run_id)["findings"][0]["id"]
+    prefix = f"current-{run_id}"
+    app.checkbox(key=f"{prefix}-review").check().run()
+    app.selectbox(key=f"{prefix}-review-label-{finding_id}").select("intentional")
+    app.button(key=f"{prefix}-save-reviews").click().run()
+    assert not app.exception
+    assert store.reviews(run_id)[finding_id]["label"] == "intentional"
+    assert any("有用率 0%" in item.value for item in app.text)
+

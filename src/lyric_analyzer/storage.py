@@ -30,6 +30,9 @@ MIGRATIONS = (
         "CREATE INDEX analysis_runs_target ON analysis_runs(target_song_id)",
         "CREATE TRIGGER delete_related_analysis BEFORE DELETE ON songs BEGIN DELETE FROM analysis_runs WHERE target_song_id=OLD.id OR id IN (SELECT run_id FROM analysis_sources WHERE song_id=OLD.id); END",
     ),
+    (
+        "CREATE TABLE finding_reviews (run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE, finding_id TEXT NOT NULL, label TEXT NOT NULL CHECK(label IN ('useful','intentional','false_positive')), note TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id,finding_id))",
+    ),
 )
 
 

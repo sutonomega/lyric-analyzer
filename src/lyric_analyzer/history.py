@@ -73,3 +73,27 @@ class HistoryStore:
             changed = connection.execute("UPDATE exclusions SET enabled=0 WHERE id=?", (exclusion_id,))
             if not changed.rowcount:
                 raise ValueError("除外設定が見つかりません。")
+
+    def reviews(self, run_id):
+        with self.library.connection() as connection:
+            return {row["finding_id"]: dict(row) for row in connection.execute("SELECT * FROM finding_reviews WHERE run_id=?", (run_id,))}
+
+    def save_reviews(self, run_id, reviews):
+        if not isinstance(reviews, list):
+            raise ValueError("評価の形式が不正です。")
+        with self.library.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ValueError("分析履歴が見つかりません。")
+            finding_ids = {item["id"] for item in json.loads(row[0])["findings"]}
+            for review in reviews:
+                if (review.get("finding_id") not in finding_ids or review.get("label") not in {None, "useful", "intentional", "false_positive"}
+                        or not isinstance(review.get("note"), str) or len(review["note"]) > 2000):
+                    raise ValueError("評価対象・分類・メモを確認してください。")
+            for review in reviews:
+                if review["label"] is None:
+                    connection.execute("DELETE FROM finding_reviews WHERE run_id=? AND finding_id=?", (run_id, review["finding_id"]))
+                else:
+                    connection.execute("INSERT INTO finding_reviews VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id,finding_id) DO UPDATE SET label=excluded.label,note=excluded.note,updated_at=excluded.updated_at",
+                                       (run_id, review["finding_id"], review["label"], review["note"], self.library.now()))

@@ -70,6 +70,42 @@ def report_panel(store, report, prefix, editable=False):
                  "corpus": [{key: source[key] for key in ("song_id", "title", "revision_id", "revision_number", "content_hash")} for source in report["corpus"]]})
     st.download_button("この分析結果をJSONで保存", json.dumps(report, ensure_ascii=False, indent=2),
                        file_name=f"lyric-analysis-{report['id']}.json", mime="application/json", key=f"{prefix}-download")
+    review_panel(store, report, prefix)
+
+
+def review_panel(store, report, prefix):
+    if not st.checkbox("上位指摘の有用性を評価", key=f"{prefix}-review"):
+        return
+    candidates = report["findings"][:10]
+    if not candidates:
+        st.info("評価する指摘がありません。")
+        return
+    saved = store.reviews(report["id"])
+    labels = {None: "未評価", "useful": "有用", "intentional": "意図的な表現", "false_positive": "誤検出"}
+    st.caption("保存時の上位最大10件を評価します。同じ表現の別の出現箇所も1件ずつ数えます。自作サンプルと実歌詞の評価は区別してください。")
+    with st.form(f"{prefix}-reviews"):
+        reviews = []
+        for number, item in enumerate(candidates, start=1):
+            previous = saved.get(item["id"], {})
+            label = st.selectbox(f"{number}：{item['surface']} / {item['line_number']}行目", list(labels),
+                                 index=list(labels).index(previous.get("label")), format_func=lambda value: labels[value],
+                                 key=f"{prefix}-review-label-{item['id']}")
+            note = st.text_input(f"{number}のメモ（任意）", value=previous.get("note", ""), key=f"{prefix}-review-note-{item['id']}")
+            reviews.append({"finding_id": item["id"], "label": label, "note": note})
+        if st.form_submit_button("評価を保存", key=f"{prefix}-save-reviews"):
+            try:
+                store.save_reviews(report["id"], reviews)
+            except (ValueError, sqlite3.Error) as error:
+                st.error(str(error))
+            else:
+                st.rerun()
+    evaluated = [saved[item["id"]] for item in candidates if item["id"] in saved]
+    useful = sum(item["label"] == "useful" for item in evaluated)
+    st.caption(f"評価済み {len(evaluated)} / 対象 {len(candidates)}件。未評価は有用率の分母に含めません。")
+    if evaluated:
+        st.text(f"有用 {useful} / 意図的 {sum(item['label'] == 'intentional' for item in evaluated)} / 誤検出 {sum(item['label'] == 'false_positive' for item in evaluated)} / 有用率 {useful / len(evaluated):.0%}")
+    st.download_button("評価記録をJSONで保存", json.dumps({"run_id": report["id"], "title": report["title"], "reviews": evaluated}, ensure_ascii=False, indent=2),
+                       file_name=f"lyric-review-{report['id']}.json", mime="application/json", key=f"{prefix}-review-download")
 
 
 def history_panel(store):

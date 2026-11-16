@@ -12,6 +12,7 @@ from lyric_analyzer.expression_ui import detection_panel, rule_editor
 from lyric_analyzer.analysis.report import build_report
 from lyric_analyzer.history import HistoryStore
 from lyric_analyzer.report_ui import report_panel, history_panel, exclusion_panel
+from lyric_analyzer.backup_ui import backup_panel
 
 
 @st.cache_data(max_entries=20, show_spinner="単語とフレーズを集計しています…")
@@ -153,6 +154,7 @@ def main():
     rule_editor(library)
     exclusion_panel(history)
     history_panel(history)
+    backup_panel(library)
     st.caption(f"保存先：{library.path}")
 
 
@@ -240,7 +242,7 @@ def comparison_panel(lyrics, result):
 
 def transfer_panel(library):
     st.subheader("書き出し・取り込み")
-    st.caption("全曲の歌詞・タグ・改訂履歴をJSONで保存します。分析設定は今後追加します。")
+    st.caption("このJSONは全曲の歌詞・タグ・改訂履歴用です。辞書・除外・履歴・評価も保存する場合は、全データのバックアップを使います。")
     st.download_button("全曲をJSONで書き出す", library.export_json(), file_name="lyric-analyzer-library.json", mime="application/json", key="export")
     uploaded = st.file_uploader("書き出したJSONを取り込む（10MBまで）", type=["json"], max_upload_size=10, key="archive")
     if uploaded is None:
