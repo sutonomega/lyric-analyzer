@@ -48,6 +48,24 @@ class HistoryStore:
             suggestions.append(suggestion)
             connection.execute("UPDATE analysis_runs SET payload_json=? WHERE id=?", (json.dumps(report, ensure_ascii=False), run_id))
 
+    def save_readings(self, run_id, suggestion_index, overrides):
+        from lyric_analyzer.analysis.prosody import comparison
+        from lyric_analyzer.local_ai import validate_saved_suggestion
+
+        with self.library.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ValueError("分析履歴が見つかりません。")
+            report = json.loads(row[0])
+            suggestions = report.get("ai_suggestions", [])
+            if type(suggestion_index) is not int or not 0 <= suggestion_index < len(suggestions):
+                raise ValueError("読みを指定する候補が見つかりません。")
+            item = suggestions[suggestion_index]
+            item["prosody"] = comparison(item["result"], overrides)
+            validate_saved_suggestion(report, item)
+            connection.execute("UPDATE analysis_runs SET payload_json=? WHERE id=?", (json.dumps(report, ensure_ascii=False), run_id))
+
     def list_runs(self):
         with self.library.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT id, created_at, json_extract(payload_json,'$.title') AS title FROM analysis_runs ORDER BY created_at DESC, id")]

@@ -346,6 +346,20 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     assert "送らない行" not in str(saved[0]["request"])
     assert app.checkbox(key=f"{prefix}-ai-saved").value
     assert len(store.list_runs()) == 1
+    reading_table = next(frame.value for frame in app.dataframe if "概算モーラ数" in frame.value.columns)
+    assert len(reading_table) == 4
+    assert reading_table.iloc[0]["方向"] == "原文"
+    app.checkbox(key=f"{prefix}-reading-edit-1").check().run()
+    app.text_input(key=f"{prefix}-reading-1-original").set_value("こころのおくで")
+    app.button(key=f"{prefix}-reading-save-1").click().run()
+    assert not app.exception
+    assert store.get(run_id)["ai_suggestions"][1]["prosody"]["rows"][0]["mora"] == 7
+    assert app.selectbox(key=f"{prefix}-ai-history").value == 1
+    app.text_input(key=f"{prefix}-reading-1-original").set_value("ABC")
+    app.button(key=f"{prefix}-reading-save-1").click().run()
+    assert not app.exception
+    assert app.error
+    assert store.get(run_id)["ai_suggestions"][1]["prosody"]["rows"][0]["mora"] == 7
 
 
 def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):

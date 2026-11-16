@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 from lyric_analyzer.analysis.parsing import parse_lines
+from lyric_analyzer.analysis.prosody import comparison, validate_comparison
 
 
 ENDPOINT = "http://127.0.0.1:11434"
@@ -137,11 +138,12 @@ def generate(model, request):
     except (KeyError, TypeError, json.JSONDecodeError, RecursionError) as error:
         raise LocalAIError("生成結果を指定形式で読み取れませんでした。") from error
     return {"provider": "ollama-local", "model": model, "prompt_version": PROMPT_VERSION,
-            "created_at": datetime.now(timezone.utc).isoformat(), "request": request, "result": result}
+            "created_at": datetime.now(timezone.utc).isoformat(), "request": request, "result": result,
+            "prosody": comparison(result)}
 
 
 def validate_saved_suggestion(report, item):
-    if (not isinstance(item, dict) or set(item) != {"provider", "model", "prompt_version", "created_at", "request", "result"}
+    if (not isinstance(item, dict) or set(item) - {"prosody"} != {"provider", "model", "prompt_version", "created_at", "request", "result"}
             or item["provider"] != "ollama-local" or not valid_model(item["model"])
             or item["prompt_version"] != PROMPT_VERSION or not isinstance(item["request"], dict)
             or not isinstance(item["created_at"], str)):
@@ -152,3 +154,5 @@ def validate_saved_suggestion(report, item):
     if datetime.fromisoformat(item["created_at"]).utcoffset() is None:
         raise LocalAIError("AI候補の保存日時が不正です。")
     validate_result(item["result"], request)
+    if "prosody" in item:
+        validate_comparison(item["result"], item["prosody"])
