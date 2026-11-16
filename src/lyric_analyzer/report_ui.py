@@ -91,11 +91,12 @@ def report_panel(store, report, prefix, editable=False):
 
 
 def review_panel(store, report, prefix):
+    from lyric_analyzer.analysis.report import review_candidates
+
     if not st.checkbox("上位指摘の有用性を評価", key=f"{prefix}-review"):
         return
     grouped_review = report["versions"]["report"] != "report-1"
-    candidates = ([group[0] for group in group_findings([item for item in report["findings"] if item["priority"] != 5])][:10]
-                  if grouped_review else report["findings"][:10])
+    candidates = review_candidates(report)
     if not candidates:
         st.info("評価する指摘がありません。")
         return

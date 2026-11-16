@@ -89,6 +89,12 @@ def group_findings(findings):
     return list(groups.values())
 
 
+def review_candidates(report):
+    if report["versions"]["report"] == "report-1":
+        return report["findings"][:10]
+    return [group[0] for group in group_findings([item for item in report["findings"] if item["priority"] != 5])][:10]
+
+
 def group_evidence(report, group):
     evidence = {(item["song_id"], item["revision_id"], item["occurrence"]["start"], item["occurrence"]["end"])
                 for row in group for match_id in row["comparisons"]

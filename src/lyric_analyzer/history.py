@@ -32,6 +32,32 @@ class HistoryStore:
             row = connection.execute("SELECT payload_json FROM analysis_runs WHERE id=?", (run_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def finding_review_records(self):
+        from lyric_analyzer.analysis.report import review_candidates
+
+        records = []
+        with self.library.connection() as connection:
+            connection.execute("BEGIN")
+            reviews = {}
+            for review in connection.execute("SELECT run_id,finding_id,label FROM finding_reviews"):
+                reviews.setdefault(review["run_id"], {})[review["finding_id"]] = review["label"]
+            rows = connection.execute("""SELECT id AS run_id,target_song_id AS song_id,created_at,
+                json_extract(payload_json,'$.title') AS title,
+                json_extract(payload_json,'$.input_hash') AS input_hash,
+                json_extract(payload_json,'$.versions') AS versions,
+                json_extract(payload_json,'$.findings') AS findings FROM analysis_runs
+                ORDER BY created_at DESC,id DESC""")
+            for row in rows:
+                item = dict(row)
+                findings = json.loads(item.pop("findings"))
+                version = json.loads(item.pop("versions"))["report"]
+                candidates = review_candidates({"versions": {"report": version}, "findings": findings})
+                labels = [reviews.get(item["run_id"], {}).get(finding["id"]) for finding in candidates]
+                records.append({**item, "report_version": version, "eligible": len(candidates),
+                                "useful": labels.count("useful"), "intentional": labels.count("intentional"),
+                                "false_positive": labels.count("false_positive")})
+        return records
+
     def save_suggestion(self, run_id, suggestion):
         from lyric_analyzer.local_ai import validate_saved_suggestion
 
