@@ -175,3 +175,44 @@ def test_incomplete_or_wrong_chat_responses_are_rejected(monkeypatch, transform)
     fake_transport(monkeypatch, transform)
     with pytest.raises(ai.LocalAIError):
         ai.generate("local:3b", ai.prepare_request("対象", 1))
+
+
+def test_evaluation_schema_binds_exact_input_without_mutating_existing_schemas():
+    first = ai.prepare_request('Ａの声と"引用"', 1)
+    other = ai.prepare_request("別の原文", 1)
+    original = deepcopy(ai.SCHEMA)
+    constrained = ai.response_schema(first, ai.CONSTRAINED_VERSION)
+    for key in ("line_id", "original"):
+        assert constrained["properties"][key]["enum"] == [first[key]]
+        assert ai.response_schema(other, ai.CONSTRAINED_VERSION)["properties"][key]["enum"] == [other[key]]
+    constrained["properties"]["reason"]["type"] = "modified"
+    assert ai.SCHEMA == original
+    assert ai.response_schema(first, "local-rewrite-1") == original
+    assert ai.response_schema(first, "local-rewrite-2") == original
+
+
+def test_evaluation_constraints_do_not_replace_response_validation(monkeypatch):
+    calls = fake_transport(monkeypatch)
+    request = ai.prepare_request("対象", 1)
+    result = ai.generate("local:3b", request, ai.CONSTRAINED_VERSION)
+    payload = next(payload for path, payload, timeout in calls if path == "/api/chat")
+    assert payload["format"]["properties"]["original"]["enum"] == ["対象"]
+    assert result["prompt_version"] == ai.CONSTRAINED_VERSION
+    def wrong(response):
+        value = json.loads(response["message"]["content"])
+        value["original"] = "取り違え"
+        response["message"]["content"] = json.dumps(value)
+        return response
+    fake_transport(monkeypatch, wrong)
+    with pytest.raises(ai.LocalAIError, match="原文"):
+        ai.generate("local:3b", request, ai.CONSTRAINED_VERSION)
+
+
+def test_experimental_method_is_not_an_app_or_backup_method(monkeypatch):
+    fake_transport(monkeypatch)
+    request = ai.prepare_request("対象", 1)
+    suggestion = ai.generate("local:3b", request, ai.CONSTRAINED_VERSION)
+    assert ai.CONSTRAINED_VERSION not in ai.PROMPTS
+    assert ai.DEFAULT_PROMPT_VERSION == "local-rewrite-1"
+    with pytest.raises(ai.LocalAIError, match="形式"):
+        ai.validate_saved_suggestion({"input": "対象"}, suggestion)

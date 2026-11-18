@@ -1,8 +1,10 @@
 """Explicit, bounded requests to the local Ollama server only."""
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
 import re
+from typing import Any
 import urllib.error
 import urllib.request
 
@@ -39,8 +41,11 @@ viewpoint: 見える側や焦点を変えた歌詞の1行を作る。視点変�
 原文に近い簡潔さと自然な日本語を優先し、長い散文や丁寧語への変更を避ける。
 返す順はmeaning、scene、viewpoint。line_idとoriginalは入力を一字も変えずコピーする。
 reasonは見直しの観点を簡潔に記す。AI生成かどうかの判定はしない。指定されたJSONだけを返す。"""
+CONSTRAINED_VERSION = "local-rewrite-3"
 PROMPTS = {"local-rewrite-1": LEGACY_SYSTEM, PROMPT_VERSION: SYSTEM}
-SCHEMA = {"type": "object", "additionalProperties": False,
+# Available to the evaluation command only; never offered in the app.
+EVALUATION_PROMPTS = {**PROMPTS, CONSTRAINED_VERSION: SYSTEM}
+SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False,
           "required": ["line_id", "original", "reason", "candidates"],
           "properties": {"line_id": {"type": "string"}, "original": {"type": "string"},
                          "reason": {"type": "string"},
@@ -131,8 +136,16 @@ def validate_result(result, request):
     return result
 
 
+def response_schema(request, prompt_version):
+    schema = deepcopy(SCHEMA)
+    if prompt_version == CONSTRAINED_VERSION:
+        for key in ("line_id", "original"):
+            schema["properties"][key] = {"type": "string", "enum": [request[key]]}
+    return schema
+
+
 def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
-    if not isinstance(prompt_version, str) or prompt_version not in PROMPTS:
+    if not isinstance(prompt_version, str) or prompt_version not in EVALUATION_PROMPTS:
         raise LocalAIError("生成の指示が未対応です。")
     if (not isinstance(request, dict) or set(request) != {"line_id", "line_number", "original", "context_before", "context_after", "theme"}
             or not isinstance(request["line_id"], str) or re.fullmatch(r"[0-9a-f]{64}", request["line_id"]) is None
@@ -148,8 +161,8 @@ def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
     info = _json_request("/api/show", {"model": model})
     if info.get("remote_host") or info.get("remote_model") or not info.get("model_info"):
         raise LocalAIError("ローカルのモデルであることを確認できません。")
-    response = _json_request("/api/chat", {"model": model, "stream": False, "format": SCHEMA,
-                             "messages": [{"role": "system", "content": PROMPTS[prompt_version]},
+    response = _json_request("/api/chat", {"model": model, "stream": False, "format": response_schema(request, prompt_version),
+                             "messages": [{"role": "system", "content": EVALUATION_PROMPTS[prompt_version]},
                                           {"role": "user", "content": json.dumps(request, ensure_ascii=False)}],
                              "options": {"temperature": 0.4, "num_predict": 1200}}, timeout=45)
     try:

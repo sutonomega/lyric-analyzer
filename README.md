@@ -286,6 +286,16 @@ JSONと同名のMarkdownに、データ版・本文・モデルdigest・指示�
 
 自作8例では両指示とも生成・検証に成功したのは5/8件で、成功例にも人物や動作の役割が変わる例が残りました。標準指示は変更していません。[具体的な確認結果](docs/rewrite-observations.md)と[全生成記録](docs/rewrite-evaluation.md)を参照してください。
 
+### 原文を固定する検証専用方式
+
+原文と対象行IDを入力値に固定する検証専用方式も比較できます。全体の改善を確認できなかったため、画面には追加していません。
+
+```powershell
+.\.venv\Scripts\python.exe -m lyric_analyzer.rewrite_evaluation --local-model qwen2.5:3b --prompt-version local-rewrite-2 --prompt-version local-rewrite-3 --output userdata/evaluation/rewrite-constrained.json
+```
+
+`--prompt-version`を省略すると従来の標準・試用の比較です。検証専用方式でも原文照合と候補の検証は省略せず、各要求の応答スキーマのハッシュをJSONに記録します。自作8例の今回の比較は従来方式7件成功、検証専用5件成功で、人物・数量の変化も残りました。[採用を見送った理由と記録](docs/rewrite-constrained-observations.md)を参照してください。
+
 ### 開発手順
 
 開発中は着手前・方針変更時・公開前にIssueの受入条件と照合します。手順は [開発時のIssue確認](CONTRIBUTING.md) を参照してください。

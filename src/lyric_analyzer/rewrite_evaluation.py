@@ -22,6 +22,7 @@ CASES = (
     ("attempt", "試行と完了", "冷たい風が部屋に入る", "君は扉を閉めようとした", "廊下から足音が聞こえる", "君が扉を閉めようと試みた。閉め終えたと断定しない。"),
     ("borrow", "貸し借りの方向", "ページの端を指で押さえる", "兄から借りた本を読む", "栞の糸が揺れている", "兄が貸し手で、省略された話者が借り手。逆向きの貸し借りに注意。"),
 )
+DEFAULT_COMPARISON = ("local-rewrite-1", "local-rewrite-2")
 
 
 def descriptor(name):
@@ -38,17 +39,22 @@ def descriptor(name):
     return {"name": name, "digest": digest}
 
 
-def evaluate(model, generate=local_ai.generate, check=None, progress=None):
+def evaluate(model, generate=local_ai.generate, check=None, progress=None, prompt_versions=DEFAULT_COMPARISON):
+    if (not isinstance(prompt_versions, (tuple, list)) or not prompt_versions
+            or any(not isinstance(prompt, str) or prompt not in local_ai.EVALUATION_PROMPTS for prompt in prompt_versions)
+            or len(set(prompt_versions)) != len(prompt_versions)):
+        raise ValueError("比較する作り方を重複なく指定してください。")
     records = []
     for case in CASES:
         key, category, before, original, after, points = case
         request = local_ai.prepare_request(f"[Verse]\n{before}\n{original}\n{after}", 3)
-        for prompt in local_ai.PROMPTS:
+        for prompt in prompt_versions:
             if check:
                 check(model)
             started = perf_counter()
             record = {"case_id": key, "category": category, "review_points": points,
-                      "prompt_version": prompt, "request": request, "human_review": "not_reviewed"}
+                      "prompt_version": prompt, "request": request, "human_review": "not_reviewed",
+                      "response_schema_sha256": hashlib.sha256(json.dumps(local_ai.response_schema(request, prompt), sort_keys=True).encode()).hexdigest()}
             try:
                 suggestion = generate(model["name"], request, prompt)
                 local_ai.validate_result(suggestion["result"], request)
@@ -65,10 +71,10 @@ def evaluate(model, generate=local_ai.generate, check=None, progress=None):
     return {"format": "rewrite-evaluation-1", "dataset_version": "synthetic-rewrite-8-v1",
             "dataset_sha256": hashlib.sha256(json.dumps(CASES, ensure_ascii=False).encode()).hexdigest(),
             "created_at": datetime.now(timezone.utc).isoformat(), "model": model,
-            "prompt_sha256": {key: hashlib.sha256(value.encode()).hexdigest() for key, value in local_ai.PROMPTS.items()},
+            "prompt_sha256": {key: hashlib.sha256(local_ai.EVALUATION_PROMPTS[key].encode()).hexdigest() for key in prompt_versions},
             "summary": [{"prompt_version": prompt, "attempts": sum(row["prompt_version"] == prompt for row in records),
                          "structural_success": sum(row["prompt_version"] == prompt and row["status"] == "success" for row in records),
-                         "failed": sum(row["prompt_version"] == prompt and row["status"] == "failed" for row in records)} for prompt in local_ai.PROMPTS],
+                         "failed": sum(row["prompt_version"] == prompt and row["status"] == "failed" for row in records)} for prompt in prompt_versions],
             "records": records}
 
 
@@ -100,6 +106,7 @@ def main():
     parser = argparse.ArgumentParser(description="自作8例をPC内モデルで各指示1回ずつ比較")
     parser.add_argument("--local-model", required=True, help="インストール済みのローカル生成モデル名")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--prompt-version", action="append", choices=list(local_ai.EVALUATION_PROMPTS), help="比較する作り方。複数指定可。省略時は従来の標準・試用。3は検証専用")
     args = parser.parse_args()
     if args.output.suffix.lower() != ".json":
         parser.error("保存先は.jsonを指定してください。Markdownも作成します。")
@@ -107,7 +114,8 @@ def main():
     def check(expected):
         if descriptor(expected["name"]) != expected:
             raise ValueError("評価中にモデルが変更されました。結果を保存しません。")
-    result = evaluate(model, check=check, progress=lambda row: print(json.dumps({key: row[key] for key in ("case_id", "prompt_version", "status", "seconds")}), flush=True))
+    result = evaluate(model, check=check, prompt_versions=args.prompt_version or DEFAULT_COMPARISON,
+                      progress=lambda row: print(json.dumps({key: row[key] for key in ("case_id", "prompt_version", "status", "seconds")}), flush=True))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     args.output.with_suffix(".md").write_text(markdown(result), encoding="utf-8-sig")
