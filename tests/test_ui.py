@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from streamlit.testing.v1 import AppTest
 from lyric_analyzer.storage import Library
 
@@ -300,7 +302,8 @@ def test_old_report_reviews_keep_occurrence_based_candidates(tmp_path, monkeypat
     assert any("旧版の評価" in item.value for item in app.caption)
 
 
-def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(tmp_path, monkeypatch):
+@pytest.mark.parametrize("method", ["local-rewrite-2", "local-rewrite-4"])
+def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(tmp_path, monkeypatch, method):
     from lyric_analyzer import local_ai
     from lyric_analyzer.history import HistoryStore
 
@@ -335,7 +338,7 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     assert app.button(key=f"{prefix}-ai-generate").disabled
     consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
     consent.check().run()
-    app.selectbox(key=f"{prefix}-ai-method").select("local-rewrite-2").run()
+    app.selectbox(key=f"{prefix}-ai-method").select(method).run()
     assert app.button(key=f"{prefix}-ai-generate").disabled
     consent = next(item for item in app.checkbox if item.key and item.key.startswith(f"{prefix}-ai-confirm-"))
     consent.check().run()
@@ -345,6 +348,7 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
     store = HistoryStore(Library(tmp_path / "library.db"))
     saved = store.get(run_id)["ai_suggestions"]
     assert len(saved) == 2
+    assert saved[0]["prompt_version"] == method
     assert saved[0]["request"]["original"] == "心の奥で"
     assert saved[0]["request"]["context_after"] == ["次の行"]
     assert "送らない行" not in str(saved[0]["request"])

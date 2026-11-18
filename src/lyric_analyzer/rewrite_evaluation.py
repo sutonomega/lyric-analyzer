@@ -54,6 +54,7 @@ def evaluate(model, generate=local_ai.generate, check=None, progress=None, promp
             started = perf_counter()
             record = {"case_id": key, "category": category, "review_points": points,
                       "prompt_version": prompt, "request": request, "human_review": "not_reviewed",
+                      "generation_controls": local_ai.generation_controls(prompt),
                       "response_schema_sha256": hashlib.sha256(json.dumps(local_ai.response_schema(request, prompt), sort_keys=True).encode()).hexdigest()}
             try:
                 suggestion = generate(model["name"], request, prompt)

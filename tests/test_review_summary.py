@@ -44,6 +44,14 @@ def test_summary_denominators_targets_and_meaning_checks_are_not_tripled():
     assert rows == before
 
 
+def test_direct_method_is_separate_from_identical_text_prompt():
+    rows = [record(1, prompt="local-rewrite-2", verdict="usable"), record(2, prompt="local-rewrite-4", verdict="reject")]
+    result = summarize(rows)
+    groups = {row["prompt_version"]: row for row in result["groups"] if row["direction"] == "meaning"}
+    assert groups["local-rewrite-2"]["usable_ratio"] == 1
+    assert groups["local-rewrite-4"]["usable_ratio"] == 0
+
+
 @pytest.mark.parametrize("verdict,ratio", [(None, None), ("unreviewed", None), ("usable", 1), ("edit", 0), ("reject", 0)])
 def test_unreviewed_is_not_zero_percent_and_other_verdicts_are_separate(verdict, ratio):
     summary = summarize([record(1, verdict=verdict)])

@@ -9,13 +9,14 @@ import streamlit as st
 
 from lyric_analyzer.analysis.review_summary import condition_id, select_records, summarize
 from lyric_analyzer.local_ai_ui import LABELS
+from lyric_analyzer.local_ai import PROMPT_LABELS
 
 
 CHECK_LABELS = {"subject": "人物・動作", "tense": "時制", "polarity": "肯定・否定", "tone": "語調"}
 
 
 def method_label(version):
-    return {"local-rewrite-1": "標準", "local-rewrite-2": "意味保持を詳しく指示（試用）"}.get(version, version)
+    return PROMPT_LABELS.get(version, version)
 
 
 def summary_panel(store):

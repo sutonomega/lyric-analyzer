@@ -48,9 +48,11 @@ def local_ai_panel(store, report, prefix):
         return
     model = st.selectbox("使用するローカルモデル", models, key=f"{prefix}-ai-model")
     prompt_version = st.selectbox("候補の作り方", list(local_ai.PROMPTS),
-                                  format_func=lambda value: {"local-rewrite-1": "標準", "local-rewrite-2": "意味保持を詳しく指示（試用）"}[value],
+                                  format_func=lambda value: local_ai.PROMPT_LABELS[value],
                                   key=f"{prefix}-ai-method")
     st.caption("試用の作り方も、意味を保てるとは限りません。モデルや原文に応じて比較してください。")
+    if prompt_version == local_ai.DIRECT_VERSION:
+        st.caption("対応モデルに思考モードをオフにするよう要求して、候補を生成します。モデルによって動作は異なります。意味や自然さが改善する保証ではありません。")
     lines = {line.line_number: line.text for line in parse_lines(report["input"]) if line.text.strip() and not line.metadata}
     if not lines:
         st.info("候補を作る本文がありません。")
@@ -63,8 +65,9 @@ def local_ai_panel(store, report, prefix):
         st.error(str(error))
         return
     st.caption("生成に使う内容を確認してください。過去曲の本文・曲名・Stylesは含めません。")
-    st.json({"endpoint": local_ai.ENDPOINT, "model": model, "system_prompt": local_ai.PROMPTS[prompt_version], "lyric_data": request})
-    fingerprint = hashlib.sha256(json.dumps([model, request, local_ai.PROMPTS[prompt_version], prompt_version], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    controls = local_ai.generation_controls(prompt_version)
+    st.json({"endpoint": local_ai.ENDPOINT, "model": model, "system_prompt": local_ai.PROMPTS[prompt_version], "generation_controls": controls, "lyric_data": request})
+    fingerprint = hashlib.sha256(json.dumps([model, request, local_ai.PROMPTS[prompt_version], prompt_version, controls], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
     confirmed = st.checkbox("この内容をPC内のOllamaに渡して生成する", key=f"{prefix}-ai-confirm-{fingerprint}")
     if len(saved) >= 20:
         st.info("この分析履歴の生成上限（20回）に達しています。")

@@ -42,8 +42,11 @@ viewpoint: 見える側や焦点を変えた歌詞の1行を作る。視点変�
 返す順はmeaning、scene、viewpoint。line_idとoriginalは入力を一字も変えずコピーする。
 reasonは見直しの観点を簡潔に記す。AI生成かどうかの判定はしない。指定されたJSONだけを返す。"""
 CONSTRAINED_VERSION = "local-rewrite-3"
-PROMPTS = {"local-rewrite-1": LEGACY_SYSTEM, PROMPT_VERSION: SYSTEM}
-# Available to the evaluation command only; never offered in the app.
+DIRECT_VERSION = "local-rewrite-4"
+PROMPTS = {"local-rewrite-1": LEGACY_SYSTEM, PROMPT_VERSION: SYSTEM, DIRECT_VERSION: SYSTEM}
+PROMPT_LABELS = {"local-rewrite-1": "標準", "local-rewrite-2": "意味保持を詳しく指示（試用）",
+                 DIRECT_VERSION: "候補を直接生成（試用）"}
+# The constrained prototype is evaluation-only; public methods can also be compared.
 EVALUATION_PROMPTS = {**PROMPTS, CONSTRAINED_VERSION: SYSTEM}
 SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False,
           "required": ["line_id", "original", "reason", "candidates"],
@@ -144,6 +147,13 @@ def response_schema(request, prompt_version):
     return schema
 
 
+def generation_controls(prompt_version):
+    controls = {"options": {"temperature": 0.4, "num_predict": 1200}}
+    if prompt_version == DIRECT_VERSION:
+        controls["think"] = False
+    return controls
+
+
 def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
     if not isinstance(prompt_version, str) or prompt_version not in EVALUATION_PROMPTS:
         raise LocalAIError("生成の指示が未対応です。")
@@ -164,7 +174,7 @@ def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
     response = _json_request("/api/chat", {"model": model, "stream": False, "format": response_schema(request, prompt_version),
                              "messages": [{"role": "system", "content": EVALUATION_PROMPTS[prompt_version]},
                                           {"role": "user", "content": json.dumps(request, ensure_ascii=False)}],
-                             "options": {"temperature": 0.4, "num_predict": 1200}}, timeout=45)
+                             **generation_controls(prompt_version)}, timeout=45)
     try:
         if response.get("done") is not True or response.get("done_reason") == "length" or response.get("model") != model:
             raise LocalAIError("候補の生成が完了しませんでした。")

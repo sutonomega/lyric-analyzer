@@ -216,3 +216,38 @@ def test_experimental_method_is_not_an_app_or_backup_method(monkeypatch):
     assert ai.DEFAULT_PROMPT_VERSION == "local-rewrite-1"
     with pytest.raises(ai.LocalAIError, match="形式"):
         ai.validate_saved_suggestion({"input": "対象"}, suggestion)
+
+
+@pytest.mark.parametrize("method", ["local-rewrite-1", "local-rewrite-2", "local-rewrite-4"])
+def test_thinking_off_is_only_requested_for_direct_method(monkeypatch, method):
+    calls = fake_transport(monkeypatch)
+    ai.generate("local:3b", ai.prepare_request("対象", 1), method)
+    payload = next(payload for path, payload, timeout in calls if path == "/api/chat")
+    assert payload["options"] == {"temperature": .4, "num_predict": 1200}
+    assert payload["format"] == ai.SCHEMA
+    if method == ai.DIRECT_VERSION:
+        assert payload["think"] is False
+    else:
+        assert "think" not in payload
+
+
+def test_generation_controls_do_not_leak_between_requests():
+    controls = ai.generation_controls(ai.DIRECT_VERSION)
+    controls["options"]["num_predict"] = 1
+    assert ai.generation_controls(ai.DIRECT_VERSION)["options"]["num_predict"] == 1200
+    assert "think" not in ai.generation_controls(ai.DEFAULT_PROMPT_VERSION)
+
+
+def test_direct_method_can_be_saved_and_restored_with_old_methods(tmp_path, monkeypatch):
+    from lyric_analyzer.backup import restore_backup
+
+    fake_transport(monkeypatch)
+    library = Library(tmp_path / "library.db")
+    store = HistoryStore(library)
+    report = build_report("対象", compare("対象", ()), detect("対象", ()), {})
+    run = store.save(report, "自作検証")
+    for method in ("local-rewrite-1", "local-rewrite-2", ai.DIRECT_VERSION):
+        store.save_suggestion(run, ai.generate("local:3b", ai.prepare_request("対象", 1), method))
+    target = Library(tmp_path / "target.db")
+    restore_backup(target, export_backup(library), confirmed=True)
+    assert HistoryStore(target).get(run) == store.get(run)
