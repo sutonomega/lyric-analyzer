@@ -6,6 +6,43 @@ from streamlit.testing.v1 import AppTest
 from lyric_analyzer.storage import Library
 
 
+@pytest.mark.parametrize("action,status", [("start", "started"), ("stop", "stopped"), ("restart", "started"), ("restart", "starting")])
+def test_service_controls_do_not_generate_or_change_analysis(tmp_path, monkeypatch, action, status):
+    from lyric_analyzer import local_ai, ollama_service
+    from lyric_analyzer.history import HistoryStore
+    from lyric_analyzer.analysis.comparison import compare
+    from lyric_analyzer.analysis.expressions import detect
+    from lyric_analyzer.analysis.report import build_report
+    from unittest.mock import Mock
+
+    store = HistoryStore(Library(tmp_path / "library.db"))
+    run = store.save(build_report("自作の本文", compare("自作の本文", ()), detect("自作の本文", ()), {}), "自作")
+    before = store.get(run)
+    def script(path, run_id):
+        from lyric_analyzer.local_ai_ui import local_ai_panel
+        from lyric_analyzer.history import HistoryStore
+        from lyric_analyzer.storage import Library
+        store = HistoryStore(Library(path))
+        local_ai_panel(store, store.get(run_id), "service")
+    control = Mock(return_value=status)
+    generate = Mock(side_effect=AssertionError("Must not generate"))
+    monkeypatch.setattr(ollama_service, action, control)
+    monkeypatch.setattr(local_ai, "list_models", lambda: ["local:3b"])
+    monkeypatch.setattr(local_ai, "generate", generate)
+    app = AppTest.from_function(script, args=(str(store.library.path), run)).run()
+    app.checkbox(key="service-ai-enabled").check().run()
+    app.button(key=f"service-ai-{action}").click().run()
+    assert not app.exception
+    assert not app.error
+    control.assert_called_once()
+    generate.assert_not_called()
+    assert store.get(run) == before
+    if status == "started":
+        assert app.selectbox(key="service-ai-model").value == "local:3b"
+    else:
+        assert not app.selectbox
+
+
 def test_save_and_reopen_song(tmp_path, monkeypatch):
     monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
@@ -427,7 +464,7 @@ def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):
     monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(local_ai, "list_models", lambda: ("local:3b",))
     def fail(model, request, prompt_version=None):
-        raise local_ai.LocalAIError("応答形式が不正")
+        raise local_ai.LocalAIError("応答形式が不正。")
     monkeypatch.setattr(local_ai, "generate", fail)
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
     app.text_area[0].set_value("心の奥で")
@@ -443,6 +480,7 @@ def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):
     app.button(key=f"{prefix}-ai-generate").click().run()
     assert not app.exception
     assert app.error
+    assert not any("。。" in item.value for item in app.error)
     assert app.dataframe
     assert store.get(run_id) == before
 

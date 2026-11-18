@@ -72,6 +72,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise LocalAIError("Ollama以外への転送は許可していません。")
 
 
+def timeout_message(path, timeout):
+    message = f"Ollamaの応答待ちが{timeout}秒を超えました。モデルの読み込み中は、少し待ってから再実行してください。"
+    if path == "/api/chat":
+        message += "生成が終わらない場合は「候補を直接生成（試用）」も確認してください。"
+    return message
+
+
 def _json_request(path, payload=None, timeout=5):
     if path not in {"/api/tags", "/api/show", "/api/chat", "/api/embed"}:
         raise LocalAIError("未対応の接続先です。")
@@ -88,8 +95,18 @@ def _json_request(path, payload=None, timeout=5):
         if not isinstance(result, dict) or "error" in result:
             raise LocalAIError("Ollamaの応答形式を確認できません。")
         return result
-    except (urllib.error.URLError, OSError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
-        raise LocalAIError("Ollamaに接続できないか、応答を読み取れませんでした。起動状態・モデル・処理時間を確認してください。") from error
+    except urllib.error.HTTPError as error:
+        raise LocalAIError(f"Ollamaがエラーを返しました（HTTP {error.code}）。使用するモデルと作り方を確認してください。") from error
+    except TimeoutError as error:
+        raise LocalAIError(timeout_message(path, timeout)) from error
+    except (urllib.error.URLError, ConnectionRefusedError) as error:
+        if isinstance(getattr(error, "reason", None), TimeoutError):
+            raise LocalAIError(timeout_message(path, timeout)) from error
+        raise LocalAIError("Ollamaに接続できません。Ollamaを起動してから「Ollamaのモデルを確認」を押してください。") from error
+    except OSError as error:
+        raise LocalAIError("Ollamaとの通信が中断しました。起動状態を確認して再実行してください。") from error
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        raise LocalAIError("Ollamaの応答を読み取れませんでした。モデルと作り方を確認して再実行してください。") from error
 
 
 def valid_model(model):

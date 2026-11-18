@@ -4,7 +4,7 @@ import sqlite3
 
 import streamlit as st
 
-from lyric_analyzer import local_ai
+from lyric_analyzer import local_ai, ollama_service
 from lyric_analyzer.analysis.parsing import parse_lines
 from lyric_analyzer.analysis.prosody import comparison
 from lyric_analyzer.analysis.candidate_quality import CHECKS, inspect_candidates
@@ -36,6 +36,36 @@ def local_ai_panel(store, report, prefix):
     if not st.checkbox("ローカルAIで言い換え候補を作る", key=f"{prefix}-ai-enabled"):
         return
     st.caption("PC内のOllama（127.0.0.1:11434）を使います。選択行・前後の本文各1行・任意のテーマを生成に使います。モデル一覧の確認では歌詞を送りません。")
+    action = None
+    if st.button("Ollamaを起動", key=f"{prefix}-ai-start"):
+        action = "start"
+    if st.button("Ollamaを停止", key=f"{prefix}-ai-stop"):
+        action = "stop"
+    if st.button("Ollamaを再起動", key=f"{prefix}-ai-restart"):
+        action = "restart"
+    if action:
+        try:
+            with st.spinner("Ollamaの状態を変更しています…"):
+                if action == "stop":
+                    status = ollama_service.stop()
+                elif action == "restart":
+                    status = ollama_service.restart(store.library.path.parent / "logs")
+                else:
+                    status = ollama_service.start(store.library.path.parent / "logs")
+            if action == "stop":
+                st.session_state.pop(f"{prefix}-ai-models", None)
+                st.success("Ollamaは停止済みです。" if status == "not_running" else "Ollamaを停止しました。")
+            elif status == "starting":
+                st.session_state.pop(f"{prefix}-ai-models", None)
+                st.info("Ollamaを起動中です。少し待って「Ollamaのモデルを確認」を押してください。")
+            else:
+                st.session_state[f"{prefix}-ai-models"] = local_ai.list_models()
+                st.success("Ollamaは起動済みです。モデル一覧を更新しました。" if status == "already_running" else "Ollamaを起動・接続し、モデル一覧を更新しました。")
+        except (local_ai.LocalAIError, OSError) as error:
+            st.session_state.pop(f"{prefix}-ai-models", None)
+            st.error(str(error))
+    st.caption("これらの操作ではモデルの取得・歌詞の送信を行いません。停止・再起動は接続先のOllamaを使う他のアプリにも影響します。")
+    st.caption("このアプリが起動・再起動したOllamaは、アプリ本体の終了時にも停止します。ブラウザーのタブを閉じただけではアプリ本体は終了しません。外部で起動済みの場合は、再起動ボタンでこのアプリの管理に切り替えられます。")
     if st.button("Ollamaのモデルを確認", key=f"{prefix}-ai-connect"):
         try:
             st.session_state[f"{prefix}-ai-models"] = local_ai.list_models()
@@ -83,7 +113,7 @@ def local_ai_panel(store, report, prefix):
                 suggestion = local_ai.generate(model, request, prompt_version=prompt_version)
                 store.save_suggestion(report["id"], suggestion)
         except (ValueError, OSError, sqlite3.Error) as error:
-            st.error(f"候補を保存できませんでした：{error}。基本の分析結果はそのまま確認できます。")
+            st.error(f"候補を保存できませんでした：{str(error).rstrip('。.')}。基本の分析結果はそのまま確認できます。")
         else:
             st.session_state[f"{prefix}-ai-open-pending"] = True
             st.rerun()

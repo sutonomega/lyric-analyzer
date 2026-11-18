@@ -124,10 +124,34 @@ def test_connection_error_is_bounded_and_redirects_are_blocked(monkeypatch):
             assert timeout == 5
             raise socket.timeout()
     monkeypatch.setattr(ai.urllib.request, "build_opener", lambda *handlers: FailingOpener())
-    with pytest.raises(ai.LocalAIError, match="接続できない"):
+    with pytest.raises(ai.LocalAIError, match="5秒"):
         ai.list_models()
     with pytest.raises(ai.LocalAIError, match="転送"):
         ai.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.com")
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (urllib.error.URLError(ConnectionRefusedError("refused")), "Ollamaを起動"),
+    (ConnectionRefusedError("refused"), "Ollamaを起動"),
+    (urllib.error.URLError(socket.timeout()), "45秒"),
+    (urllib.error.HTTPError(ai.ENDPOINT, 500, "server error", {}, None), "HTTP 500"),
+    (OSError("connection reset"), "通信が中断"),
+])
+def test_transport_errors_explain_separate_causes(monkeypatch, failure, expected):
+    class FailingOpener:
+        def open(self, request, timeout):
+            raise failure
+    monkeypatch.setattr(ai.urllib.request, "build_opener", lambda *handlers: FailingOpener())
+    with pytest.raises(ai.LocalAIError, match=expected):
+        ai._json_request("/api/chat", {}, timeout=45)
+
+
+def test_unreadable_response_is_not_reported_as_connection_failure(monkeypatch):
+    import io
+    monkeypatch.setattr(ai.urllib.request, "build_opener", lambda *handlers: type("Opener", (), {
+        "open": lambda self, request, timeout: io.BytesIO(b"not JSON")})())
+    with pytest.raises(ai.LocalAIError, match="応答を読み取れません"):
+        ai._json_request("/api/tags")
 
 
 def test_suggestions_persist_without_changing_lyrics_and_backup_roundtrips(tmp_path, monkeypatch):
