@@ -32,6 +32,8 @@ def backup_panel(library):
     counts = preview["counts"]
     st.text(f"作成日時：{preview['created_at']}")
     st.text(f"曲 {counts['songs']} / 改訂 {counts['song_revisions']} / 辞書 {counts['expression_rules']} / 履歴 {counts['analysis_runs']} / 除外 {counts['exclusions']} / 評価 {counts['finding_reviews']}")
+    if preview['archived_songs']:
+        st.caption(f"曲の件数には、重複整理で履歴参照用に残した{preview['archived_songs']}件を含みます。通常の登録曲は{counts['songs'] - preview['archived_songs']}曲です。")
     st.caption("現在の全データをこの内容に置き換えます。復元直前のデータは保存先のbackupsフォルダーへ自動退避します。")
     digest = hashlib.sha256(content).hexdigest()
     confirmed = st.checkbox("現在のデータを、このバックアップの内容に置き換える", key=f"restore-confirm-{digest}")

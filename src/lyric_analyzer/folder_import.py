@@ -172,7 +172,7 @@ def import_records(library, records, allow_variants=False):
         raise ValueError("取り込む曲を1〜500件選択してください。")
     with library.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        existing = [dict(row) for row in connection.execute("SELECT title,styles,lyrics_raw FROM songs JOIN song_revisions ON songs.id=song_id WHERE revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id)")]
+        existing = [dict(row) for row in connection.execute("SELECT title,styles,lyrics_raw FROM songs JOIN song_revisions ON songs.id=song_id WHERE duplicate_archived=0 AND revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id)")]
         planned = plan_import(records, existing, allow_variants)
         added = skipped = 0
         for record, _, add in planned:

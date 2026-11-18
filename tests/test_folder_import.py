@@ -176,7 +176,7 @@ def test_schema_five_backup_can_still_be_restored(tmp_path):
     assert target.list_songs()[0]["title"] == "旧版"
     assert target.list_songs()[0]["styles"] == ""
     with target.connection() as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 8
 
 
 def test_schema_five_database_upgrade_preserves_existing_data(tmp_path):

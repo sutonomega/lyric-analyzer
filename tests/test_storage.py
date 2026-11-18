@@ -25,7 +25,7 @@ def test_migration_is_repeatable_and_foreign_keys_enforced(tmp_path):
     library = Library(path)
     Library(path)
     with library.connection() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 7
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 8
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("INSERT INTO song_revisions VALUES ('r','missing',1,'text','hash','now')")
 

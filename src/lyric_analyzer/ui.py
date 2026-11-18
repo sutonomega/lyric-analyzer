@@ -71,6 +71,9 @@ def main():
     comparison_key = f"comparison-songs-{selected}"
     if comparison_key not in st.session_state:
         st.session_state[comparison_key] = list(comparison_options)
+    valid_comparisons = [song_id for song_id in st.session_state[comparison_key] if song_id in comparison_options]
+    if valid_comparisons != st.session_state[comparison_key]:
+        st.session_state[comparison_key] = valid_comparisons
     history = HistoryStore(library)
     with st.form(f"song-{selected}"):
         title = st.text_input("曲名", value=song.get("title", ""))
@@ -285,6 +288,7 @@ def transfer_panel(library):
     for song in archive["songs"]:
         st.text(f"{song['title']} / {len(song['revisions'])}改訂 / {', '.join(song['tags'])}")
     mode = st.radio("IDが重複する曲の扱い", ["skip", "copy"], format_func=lambda value: {"skip": "取り込まない", "copy": "別の曲として追加"}[value], key="import_mode")
+    st.caption("曲名・Styles・歌詞が完全一致する登録済みの曲は、IDが違う場合や「別の曲として追加」でも追加しません。制作日・タグ・改訂などの違いがある場合は、取り込みを中止して既存曲の確認を案内します。")
     if st.button("表示内容で取り込む", key="import"):
         try:
             imported, skipped = library.import_json(uploaded.getvalue(), mode)

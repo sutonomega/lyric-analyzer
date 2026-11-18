@@ -39,6 +39,9 @@ MIGRATIONS = (
     (
         "ALTER TABLE songs ADD COLUMN composed_on TEXT NOT NULL DEFAULT ''",
     ),
+    (
+        "ALTER TABLE songs ADD COLUMN duplicate_archived INTEGER NOT NULL DEFAULT 0 CHECK(duplicate_archived IN (0,1))",
+    ),
 )
 
 
@@ -112,11 +115,20 @@ class Library:
         timestamp = self.now()
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            from lyric_analyzer.duplicates import duplicate_id
+            effective_styles = styles or ""
+            if song_id is not None and styles is None:
+                current = connection.execute("SELECT styles FROM songs WHERE id=? AND duplicate_archived=0", (song_id,)).fetchone()
+                if current is None:
+                    raise ValueError("曲が見つかりません。")
+                effective_styles = current[0]
+            if duplicate_id(connection, title.strip(), effective_styles, lyrics, song_id):
+                raise ValueError("曲名・Styles・歌詞が完全一致する曲が登録済みです。既存の曲を選んで編集してください。")
             if song_id is None:
                 song_id = str(uuid4())
                 connection.execute("INSERT INTO songs (id,title,theme,created_at,updated_at,styles) VALUES (?, ?, ?, ?, ?, ?)", (song_id, title.strip(), theme, timestamp, timestamp, styles or ""))
             else:
-                changed = connection.execute("UPDATE songs SET title=?, theme=?, updated_at=?, styles=COALESCE(?,styles) WHERE id=?", (title.strip(), theme, timestamp, styles, song_id))
+                changed = connection.execute("UPDATE songs SET title=?, theme=?, updated_at=?, styles=COALESCE(?,styles) WHERE id=? AND duplicate_archived=0", (title.strip(), theme, timestamp, styles, song_id))
                 if changed.rowcount != 1:
                     raise ValueError("曲が見つかりません。")
             latest = connection.execute("SELECT * FROM song_revisions WHERE song_id=? ORDER BY revision_number DESC LIMIT 1", (song_id,)).fetchone()
@@ -140,7 +152,7 @@ class Library:
 
     def list_songs(self, query="", tag=None):
         with self.connection() as connection:
-            rows = connection.execute("SELECT songs.*, song_revisions.lyrics_raw, song_revisions.revision_number FROM songs JOIN song_revisions ON songs.id=song_revisions.song_id WHERE song_revisions.revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.updated_at DESC").fetchall()
+            rows = connection.execute("SELECT songs.*, song_revisions.lyrics_raw, song_revisions.revision_number FROM songs JOIN song_revisions ON songs.id=song_revisions.song_id WHERE songs.duplicate_archived=0 AND song_revisions.revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.updated_at DESC").fetchall()
             songs = []
             for row in rows:
                 song = dict(row)
@@ -154,7 +166,7 @@ class Library:
         with self.connection() as connection:
             connection.execute("BEGIN")
             songs = []
-            for row in connection.execute("SELECT * FROM songs ORDER BY id"):
+            for row in connection.execute("SELECT * FROM songs WHERE duplicate_archived=0 ORDER BY id"):
                 song = dict(row)
                 song["tags"] = [item[0] for item in connection.execute("SELECT name FROM tags JOIN song_tags ON tags.id=tag_id WHERE song_id=? ORDER BY name", (song["id"],))]
                 song["revisions"] = [dict(item) for item in connection.execute("SELECT * FROM song_revisions WHERE song_id=? ORDER BY revision_number", (song["id"],))]
@@ -165,11 +177,12 @@ class Library:
         from lyric_analyzer.analysis.comparison import SongSnapshot
 
         with self.connection() as connection:
-            rows = connection.execute("SELECT songs.id AS song_id, songs.title, songs.styles, songs.created_at, song_revisions.id AS revision_id, revision_number, lyrics_raw, content_hash FROM songs JOIN song_revisions ON song_revisions.song_id=songs.id WHERE revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.id").fetchall()
+            rows = connection.execute("SELECT songs.id AS song_id, songs.title, songs.styles, songs.created_at, song_revisions.id AS revision_id, revision_number, lyrics_raw, content_hash FROM songs JOIN song_revisions ON song_revisions.song_id=songs.id WHERE songs.duplicate_archived=0 AND revision_number=(SELECT MAX(revision_number) FROM song_revisions WHERE song_id=songs.id) ORDER BY songs.id").fetchall()
             return tuple(SongSnapshot(row["song_id"], row["title"], row["revision_id"], row["revision_number"], row["lyrics_raw"], row["content_hash"], row["created_at"], row["styles"]) for row in rows)
 
     def import_json(self, content, conflict="skip"):
         from lyric_analyzer.transfer import validate_archive
+        from lyric_analyzer.duplicates import duplicate_id, signature
 
         archive = validate_archive(content)
         if conflict not in {"skip", "copy"}:
@@ -180,6 +193,16 @@ class Library:
             for song in archive["songs"]:
                 exists = connection.execute("SELECT 1 FROM songs WHERE id=?", (song["id"],)).fetchone()
                 if exists and conflict == "skip":
+                    skipped += 1
+                    continue
+                duplicate = duplicate_id(connection, song['title'], song['styles'], song['revisions'][-1]['lyrics_raw'])
+                if duplicate:
+                    stored = connection.execute('SELECT * FROM songs WHERE id=?', (duplicate,)).fetchone()
+                    old = signature(connection, stored)
+                    tags = tuple(row[0] for row in connection.execute('SELECT name FROM tags JOIN song_tags ON tags.id=tag_id WHERE song_id=? ORDER BY name', (duplicate,)))
+                    if (old[2] != song['theme'] or old[3] != song['composed_on'] or tags != tuple(sorted(song['tags']))
+                            or old[5] != tuple(r['lyrics_raw'] for r in song['revisions'])):
+                        raise ValueError('同じ曲名・Styles・歌詞の曲がありますが、制作日・タグ・改訂などが異なります。既存曲を確認して編集してください。取り込みは取り消しました。')
                     skipped += 1
                     continue
                 song_id = str(uuid4()) if exists else song["id"]
@@ -243,7 +266,7 @@ class Library:
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             for change in changes:
-                row = connection.execute("SELECT title,composed_on,updated_at FROM songs WHERE id=?", (change["song_id"],)).fetchone()
+                row = connection.execute("SELECT title,composed_on,updated_at FROM songs WHERE id=? AND duplicate_archived=0", (change["song_id"],)).fetchone()
                 if row is None or tuple(row) != (change["title"], change["before"], change["updated_at"]):
                     raise ValueError("曲が変更または削除されています。一覧を読み直して確認してください。変更は保存していません。")
             timestamp = self.now()

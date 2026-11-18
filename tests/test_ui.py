@@ -59,6 +59,38 @@ def test_save_and_reopen_song(tmp_path, monkeypatch):
     assert app.text_area[0].value == "窓に残る灯り"
 
 
+def test_duplicate_manual_save_shows_message_without_adding_song(tmp_path, monkeypatch):
+    monkeypatch.setenv('LYRIC_ANALYZER_DATA_DIR',str(tmp_path))
+    library=Library(tmp_path/'library.db')
+    library.save('自作確認曲','窓に残る灯り')
+    app=AppTest.from_file(Path(__file__).resolve().parents[1]/'app.py').run()
+    app.text_input[1].set_value('自作確認曲')
+    app.text_area[0].set_value('窓に残る灯り')
+    app.button[0].click().run()
+    assert not app.exception
+    assert any('完全一致' in error.value for error in app.error)
+    assert len(library.list_songs())==1
+
+
+def test_open_page_removes_archived_comparison_selection(tmp_path, monkeypatch):
+    from uuid import uuid4
+    from lyric_analyzer.duplicates import consolidate
+    monkeypatch.setenv('LYRIC_ANALYZER_DATA_DIR',str(tmp_path))
+    library=Library(tmp_path/'library.db')
+    song=library.save('自作確認曲','窓に残る灯り')
+    duplicate=str(uuid4())
+    with library.connection() as c:
+        c.execute('INSERT INTO songs(id,title,theme,created_at,updated_at) SELECT ?,title,theme,created_at,updated_at FROM songs WHERE id=?',(duplicate,song))
+        row=c.execute('SELECT * FROM song_revisions WHERE song_id=?',(song,)).fetchone()
+        c.execute('INSERT INTO song_revisions VALUES(?,?,?,?,?,?)',(str(uuid4()),duplicate,1,row['lyrics_raw'],row['content_hash'],row['created_at']))
+    app=AppTest.from_file(Path(__file__).resolve().parents[1]/'app.py').run()
+    assert len(app.multiselect(key='comparison-songs-None').value)==2
+    consolidate(library)
+    app.run()
+    assert not app.exception
+    assert len(app.multiselect(key='comparison-songs-None').value)==1
+
+
 def test_old_embedding_model_cache_requires_refresh_and_only_shows_writers(tmp_path, monkeypatch):
     from lyric_analyzer import local_ai
     from lyric_analyzer.history import HistoryStore

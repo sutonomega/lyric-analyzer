@@ -33,11 +33,11 @@ def test_round_trip_conflicts_and_tags(tmp_path):
     assert target.list_songs(tag="夜")
     assert not target.list_songs(tag="朝")
     assert target.import_json(archive) == (0, 1)
-    assert target.import_json(archive, "copy") == (1, 0)
-    assert len(target.list_songs()) == 2
+    assert target.import_json(archive, "copy") == (0, 1)
+    assert len(target.list_songs()) == 1
     assert len(target.revisions(song_id)) == 2
     target.save("改題", "二行目", song_id=song_id, tags=[])
-    assert target.list_songs(tag="夜")[0]["id"] != song_id
+    assert target.list_songs(tag="夜") == []
 
 
 @pytest.mark.parametrize("change", [

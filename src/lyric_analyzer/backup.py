@@ -156,6 +156,8 @@ def validated_backup(content):
                 rows = [{**row, "styles": ""} if isinstance(row, dict) and "styles" not in row else row for row in rows]
             if table == "songs" and archive["schema_version"] < 7:
                 rows = [{**row, "composed_on": ""} if isinstance(row, dict) and "composed_on" not in row else row for row in rows]
+            if table == "songs" and archive["schema_version"] < 8:
+                rows = [{**row, "duplicate_archived": 0} if isinstance(row, dict) and "duplicate_archived" not in row else row for row in rows]
             if table == "schema_migrations":
                 rows = [*rows, *({"version": version, "applied_at": datetime.now(timezone.utc).isoformat()}
                                  for version in range(archive["schema_version"] + 1, len(MIGRATIONS) + 1))]
@@ -188,7 +190,8 @@ def validated_backup(content):
 
 def inspect_backup(content):
     with validated_backup(content) as (archive, _):
-        return {"created_at": archive["created_at"], "counts": {table: len(rows) for table, rows in archive["tables"].items()}}
+        return {"created_at": archive["created_at"], "counts": {table: len(rows) for table, rows in archive["tables"].items()},
+                "archived_songs": sum(row.get('duplicate_archived', 0) for row in archive['tables']['songs'])}
 
 
 def restore_backup(library, content, confirmed=False):
