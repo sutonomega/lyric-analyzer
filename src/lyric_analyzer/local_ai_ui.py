@@ -53,28 +53,28 @@ def local_ai_panel(store, report, prefix):
                 else:
                     status = ollama_service.start(store.library.path.parent / "logs")
             if action == "stop":
-                st.session_state.pop(f"{prefix}-ai-models", None)
+                st.session_state.pop(f"{prefix}-ai-generation-models", None)
                 st.success("Ollamaは停止済みです。" if status == "not_running" else "Ollamaを停止しました。")
             elif status == "starting":
-                st.session_state.pop(f"{prefix}-ai-models", None)
+                st.session_state.pop(f"{prefix}-ai-generation-models", None)
                 st.info("Ollamaを起動中です。少し待って「Ollamaのモデルを確認」を押してください。")
             else:
-                st.session_state[f"{prefix}-ai-models"] = local_ai.list_models()
+                st.session_state[f"{prefix}-ai-generation-models"] = local_ai.list_generation_models()
                 st.success("Ollamaは起動済みです。モデル一覧を更新しました。" if status == "already_running" else "Ollamaを起動・接続し、モデル一覧を更新しました。")
         except (local_ai.LocalAIError, OSError) as error:
-            st.session_state.pop(f"{prefix}-ai-models", None)
+            st.session_state.pop(f"{prefix}-ai-generation-models", None)
             st.error(str(error))
     st.caption("これらの操作ではモデルの取得・歌詞の送信を行いません。停止・再起動は接続先のOllamaを使う他のアプリにも影響します。")
     st.caption("このアプリが起動・再起動したOllamaは、アプリ本体の終了時にも停止します。ブラウザーのタブを閉じただけではアプリ本体は終了しません。外部で起動済みの場合は、再起動ボタンでこのアプリの管理に切り替えられます。")
     if st.button("Ollamaのモデルを確認", key=f"{prefix}-ai-connect"):
         try:
-            st.session_state[f"{prefix}-ai-models"] = local_ai.list_models()
+            st.session_state[f"{prefix}-ai-generation-models"] = local_ai.list_generation_models()
         except local_ai.LocalAIError as error:
-            st.session_state.pop(f"{prefix}-ai-models", None)
+            st.session_state.pop(f"{prefix}-ai-generation-models", None)
             st.error(str(error))
-    models = st.session_state.get(f"{prefix}-ai-models", ())
+    models = st.session_state.get(f"{prefix}-ai-generation-models", ())
     if not models:
-        st.info("Ollamaを起動し、インストール済みのローカルモデルを確認してください。モデルは自動ダウンロードしません。")
+        st.info("Ollamaを起動し、文章生成用のローカルモデルを確認してください。検索専用モデルは候補生成には表示しません。モデルは自動ダウンロードしません。")
         return
     model = st.selectbox("使用するローカルモデル", models, key=f"{prefix}-ai-model")
     method_key = f"{prefix}-ai-method"

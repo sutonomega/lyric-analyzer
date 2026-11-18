@@ -123,6 +123,18 @@ def list_models():
                               and valid_model(row.get("name")) and not row.get("remote_host") and not row.get("remote_model")))
 
 
+def supports_generation(info):
+    capabilities = info.get("capabilities")
+    return (isinstance(capabilities, list) and "completion" in capabilities
+            and bool(info.get("model_info")) and not info.get("remote_host") and not info.get("remote_model"))
+
+
+def list_generation_models():
+    # Metadata only: embedding models remain available to semantic search.
+    return tuple(model for model in list_models()
+                 if supports_generation(_json_request("/api/show", {"model": model})))
+
+
 def prepare_request(raw, line_number, theme=""):
     if not isinstance(raw, str) or len(raw) > 20_000 or type(line_number) is not int:
         raise LocalAIError("対象の歌詞と行番号を確認してください。")
@@ -192,6 +204,8 @@ def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
     info = _json_request("/api/show", {"model": model})
     if info.get("remote_host") or info.get("remote_model") or not info.get("model_info"):
         raise LocalAIError("ローカルのモデルであることを確認できません。")
+    if not supports_generation(info):
+        raise LocalAIError("このモデルでは文章を生成できることを確認できません。embeddinggemmaなどの検索専用モデルは候補生成には使えません。「Ollamaのモデルを確認」で一覧を更新し、文章生成用モデルを選んでください。")
     response = _json_request("/api/chat", {"model": model, "stream": False, "format": response_schema(request, prompt_version),
                              "messages": [{"role": "system", "content": EVALUATION_PROMPTS[prompt_version]},
                                           {"role": "user", "content": json.dumps(request, ensure_ascii=False)}],

@@ -27,7 +27,7 @@ def fake_transport(monkeypatch, transform=None):
         if path == "/api/tags":
             return {"models": [{"name": "local:3b"}, {"name": "cloud:latest"}, {"name": "alias", "remote_host": "https://example.com"}]}
         if path == "/api/show":
-            return {"model_info": {"general.architecture": "test"}}
+            return {"model_info": {"general.architecture": "test"}, "capabilities": ["completion"]}
         data = json.loads(payload["messages"][1]["content"])
         value = {"model": payload["model"], "done": True, "message": {"content": json.dumps(response(data), ensure_ascii=False)}}
         return transform(value) if transform else value
@@ -45,6 +45,40 @@ def test_request_limits_context_and_excludes_metadata_and_other_songs():
     assert "送らない本文" not in json.dumps(request, ensure_ascii=False)
     assert "Verse" not in json.dumps(request)
     assert request["line_id"] != ai.prepare_request(raw + "追記", 4)["line_id"]
+
+
+def test_generation_model_list_excludes_embedding_remote_and_unknown(monkeypatch):
+    calls = []
+    def transport(path, payload=None, timeout=5):
+        calls.append((path, payload))
+        if path == "/api/tags":
+            return {"models": [{"name": name} for name in ("embeddinggemma:300m", "writer:3b", "unknown", "remote-alias")]}
+        name = payload["model"]
+        return {"model_info": {"general.architecture": "test"},
+                "capabilities": {"embeddinggemma:300m": ["embedding"], "writer:3b": ["completion"],
+                                 "unknown": None, "remote-alias": ["completion"]}[name],
+                **({"remote_host": "https://example.com"} if name == "remote-alias" else {})}
+    monkeypatch.setattr(ai, "_json_request", transport)
+    assert ai.list_generation_models() == ("writer:3b",)
+    assert all(path in ("/api/tags", "/api/show") for path, _ in calls)
+    assert all(payload is None or set(payload) == {"model"} for _, payload in calls)
+    # The unfiltered API remains available to other callers.
+    assert "embeddinggemma:300m" in ai.list_models()
+
+
+@pytest.mark.parametrize("capabilities", [["embedding"], [], None, "completion", {"completion": True}])
+def test_non_generation_model_never_receives_lyrics(monkeypatch, capabilities):
+    calls = []
+    def transport(path, payload=None, timeout=5):
+        calls.append(path)
+        if path == "/api/tags":
+            return {"models": [{"name": "embeddinggemma:300m"}]}
+        assert path == "/api/show", "Must not send a chat request"
+        return {"model_info": {"general.architecture": "test"}, "capabilities": capabilities}
+    monkeypatch.setattr(ai, "_json_request", transport)
+    with pytest.raises(ai.LocalAIError, match="検索専用"):
+        ai.generate("embeddinggemma:300m", ai.prepare_request("自作の確認文", 1))
+    assert calls == ["/api/tags", "/api/show"]
 
 
 @pytest.mark.parametrize("line,theme", [(True, ""), (0, ""), (1, ""), (4, "x" * 501)])

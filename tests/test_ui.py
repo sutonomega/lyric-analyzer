@@ -27,7 +27,7 @@ def test_service_controls_do_not_generate_or_change_analysis(tmp_path, monkeypat
     control = Mock(return_value=status)
     generate = Mock(side_effect=AssertionError("Must not generate"))
     monkeypatch.setattr(ollama_service, action, control)
-    monkeypatch.setattr(local_ai, "list_models", lambda: ["local:3b"])
+    monkeypatch.setattr(local_ai, "list_generation_models", lambda: ["local:3b"])
     monkeypatch.setattr(local_ai, "generate", generate)
     app = AppTest.from_function(script, args=(str(store.library.path), run)).run()
     app.checkbox(key="service-ai-enabled").check().run()
@@ -59,6 +59,43 @@ def test_save_and_reopen_song(tmp_path, monkeypatch):
     assert app.text_area[0].value == "窓に残る灯り"
 
 
+def test_old_embedding_model_cache_requires_refresh_and_only_shows_writers(tmp_path, monkeypatch):
+    from lyric_analyzer import local_ai
+    from lyric_analyzer.history import HistoryStore
+    from lyric_analyzer.analysis.comparison import compare
+    from lyric_analyzer.analysis.expressions import detect
+    from lyric_analyzer.analysis.report import build_report
+    store = HistoryStore(Library(tmp_path / "library.db"))
+    run = store.save(build_report("自作の本文", compare("自作の本文", ()), detect("自作の本文", ()), {}), "自作")
+    def script(path, run_id):
+        from lyric_analyzer.local_ai_ui import local_ai_panel
+        from lyric_analyzer.history import HistoryStore
+        from lyric_analyzer.storage import Library
+        store = HistoryStore(Library(path))
+        local_ai_panel(store, store.get(run_id), "filtered")
+    calls = []
+    def transport(path, payload=None, timeout=5):
+        calls.append(path)
+        if path == "/api/tags":
+            return {"models": [{"name": "embeddinggemma:300m"}, {"name": "writer:3b"}]}
+        assert path == "/api/show"
+        return {"model_info": {"test": True}, "capabilities": ["embedding"] if payload["model"] == "embeddinggemma:300m" else ["completion"]}
+    monkeypatch.setattr(local_ai, "_json_request", transport)
+    app = AppTest.from_function(script, args=(str(store.library.path), run)).run()
+    app.session_state["filtered-ai-models"] = ("embeddinggemma:300m", "writer:3b")
+    app.session_state["filtered-ai-model"] = "embeddinggemma:300m"
+    app.checkbox(key="filtered-ai-enabled").check().run()
+    assert not app.exception
+    assert not app.selectbox
+    assert calls == []
+    app.button(key="filtered-ai-connect").click().run()
+    assert not app.exception
+    assert app.selectbox(key="filtered-ai-model").options == ["writer:3b"]
+    assert app.selectbox(key="filtered-ai-model").value == "writer:3b"
+    assert app.button(key="filtered-ai-generate").disabled
+    assert "/api/chat" not in calls
+
+
 def test_old_direct_selection_upgrades_without_reusing_consent_or_rewriting_history(tmp_path, monkeypatch):
     import hashlib
     import json
@@ -87,7 +124,7 @@ def test_old_direct_selection_upgrades_without_reusing_consent_or_rewriting_hist
     monkeypatch.setattr(local_ai, "generate", unexpected)
     app = AppTest.from_function(script, args=(str(library.path), run))
     app.session_state["migration-ai-enabled"] = True
-    app.session_state["migration-ai-models"] = ("local:3b",)
+    app.session_state["migration-ai-generation-models"] = ("local:3b",)
     app.session_state["migration-ai-method"] = "local-rewrite-4"
     old_fingerprint = hashlib.sha256(json.dumps(["local:3b", request, local_ai.SYSTEM, "local-rewrite-4",
                                                 local_ai.generation_controls("local-rewrite-4")], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
@@ -396,7 +433,7 @@ def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(
                 "created_at": Library.now(), "request": request,
                 "result": {"line_id": request["line_id"], "original": request["original"], "reason": "物や動作で描く",
                            "candidates": [{"direction": d, "text": "切符を折って君を待つ"} for d in local_ai.DIRECTIONS]}}
-    monkeypatch.setattr(local_ai, "list_models", models)
+    monkeypatch.setattr(local_ai, "list_generation_models", models)
     monkeypatch.setattr(local_ai, "generate", generate)
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
     app.text_area[0].set_value("[Verse]\n心の奥で\n次の行\n送らない行")
@@ -462,7 +499,7 @@ def test_local_ai_failure_keeps_basic_analysis(tmp_path, monkeypatch):
     from lyric_analyzer.history import HistoryStore
 
     monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(local_ai, "list_models", lambda: ("local:3b",))
+    monkeypatch.setattr(local_ai, "list_generation_models", lambda: ("local:3b",))
     def fail(model, request, prompt_version=None):
         raise local_ai.LocalAIError("応答形式が不正。")
     monkeypatch.setattr(local_ai, "generate", fail)
