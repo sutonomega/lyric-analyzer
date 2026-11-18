@@ -211,7 +211,12 @@ def generate(model, request, prompt_version=DEFAULT_PROMPT_VERSION):
                                           {"role": "user", "content": json.dumps(request, ensure_ascii=False)}],
                              **generation_controls(prompt_version)}, timeout=45)
     try:
-        if response.get("done") is not True or response.get("done_reason") == "length" or response.get("model") != model:
+        if response.get("done_reason") == "length":
+            hint = ("「候補の作り方」を「候補を直接生成（試用）」に変更し、内容を確認して再実行してください。"
+                    if prompt_version not in (LEGACY_DIRECT_VERSION, DIRECT_VERSION)
+                    else "対象行や前後の行を短くするか、別の文章生成用モデルを選んで再実行してください。")
+            raise LocalAIError("候補が完成する前に出力上限（1,200トークン）に達しました。思考処理も上限を消費する場合があります。" + hint)
+        if response.get("done") is not True or response.get("model") != model:
             raise LocalAIError("候補の生成が完了しませんでした。")
         result = validate_result(json.loads(response["message"]["content"]), request)
     except (KeyError, TypeError, json.JSONDecodeError, RecursionError) as error:

@@ -81,6 +81,17 @@ def test_non_generation_model_never_receives_lyrics(monkeypatch, capabilities):
     assert calls == ["/api/tags", "/api/show"]
 
 
+@pytest.mark.parametrize("method,expected", [(ai.DEFAULT_PROMPT_VERSION, "候補を直接生成"),
+                                              (ai.PROMPT_VERSION, "候補を直接生成"),
+                                              (ai.DIRECT_VERSION, "別の文章生成用モデル")])
+def test_output_limit_explains_recovery_without_retry(monkeypatch, method, expected):
+    calls = fake_transport(monkeypatch, lambda value: {**value, "done_reason": "length"})
+    with pytest.raises(ai.LocalAIError, match=expected) as error:
+        ai.generate("local:3b", ai.prepare_request("自作の本文", 1), method)
+    assert "1,200トークン" in str(error.value)
+    assert sum(path == "/api/chat" for path, _, _ in calls) == 1
+
+
 @pytest.mark.parametrize("line,theme", [(True, ""), (0, ""), (1, ""), (4, "x" * 501)])
 def test_bad_selection_or_theme_is_rejected(line, theme):
     with pytest.raises(ai.LocalAIError):

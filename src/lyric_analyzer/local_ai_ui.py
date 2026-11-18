@@ -84,6 +84,8 @@ def local_ai_panel(store, report, prefix):
                                   format_func=lambda value: local_ai.PROMPT_LABELS[value],
                                   key=method_key)
     st.caption("試用の作り方も、意味を保てるとは限りません。モデルや原文に応じて比較してください。")
+    if prompt_version != local_ai.DIRECT_VERSION:
+        st.caption("思考を行うモデルでは、標準・意味保持の詳しい指示で候補が完成する前に出力上限に達する場合があります。その場合は「候補を直接生成（試用）」で再確認してください。作り方は自動では切り替えません。")
     if prompt_version == local_ai.DIRECT_VERSION:
         st.caption("対応モデルに思考モードをオフにするよう要求して、候補を生成します。モデルによって動作は異なります。意味や自然さが改善する保証ではありません。")
         st.caption("返答の対象行IDと原文を入力値に限定します。これは引用元の取り違えを抑えるための制約で、候補の意味の一致を保証するものではありません。")
