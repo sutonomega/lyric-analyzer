@@ -42,9 +42,13 @@ viewpoint: 見える側や焦点を変えた歌詞の1行を作る。視点変�
 返す順はmeaning、scene、viewpoint。line_idとoriginalは入力を一字も変えずコピーする。
 reasonは見直しの観点を簡潔に記す。AI生成かどうかの判定はしない。指定されたJSONだけを返す。"""
 CONSTRAINED_VERSION = "local-rewrite-3"
-DIRECT_VERSION = "local-rewrite-4"
-PROMPTS = {"local-rewrite-1": LEGACY_SYSTEM, PROMPT_VERSION: SYSTEM, DIRECT_VERSION: SYSTEM}
+LEGACY_DIRECT_VERSION = "local-rewrite-4"
+DIRECT_VERSION = "local-rewrite-5"
+PROMPTS = {"local-rewrite-1": LEGACY_SYSTEM, PROMPT_VERSION: SYSTEM,
+           LEGACY_DIRECT_VERSION: SYSTEM, DIRECT_VERSION: SYSTEM}
+GENERATION_METHODS = (DEFAULT_PROMPT_VERSION, PROMPT_VERSION, DIRECT_VERSION)
 PROMPT_LABELS = {"local-rewrite-1": "標準", "local-rewrite-2": "意味保持を詳しく指示（試用）",
+                 LEGACY_DIRECT_VERSION: "候補を直接生成（旧試用）",
                  DIRECT_VERSION: "候補を直接生成（試用）"}
 # The constrained prototype is evaluation-only; public methods can also be compared.
 EVALUATION_PROMPTS = {**PROMPTS, CONSTRAINED_VERSION: SYSTEM}
@@ -141,7 +145,7 @@ def validate_result(result, request):
 
 def response_schema(request, prompt_version):
     schema = deepcopy(SCHEMA)
-    if prompt_version == CONSTRAINED_VERSION:
+    if prompt_version in (CONSTRAINED_VERSION, DIRECT_VERSION):
         for key in ("line_id", "original"):
             schema["properties"][key] = {"type": "string", "enum": [request[key]]}
     return schema
@@ -149,7 +153,7 @@ def response_schema(request, prompt_version):
 
 def generation_controls(prompt_version):
     controls = {"options": {"temperature": 0.4, "num_predict": 1200}}
-    if prompt_version == DIRECT_VERSION:
+    if prompt_version in (LEGACY_DIRECT_VERSION, DIRECT_VERSION):
         controls["think"] = False
     return controls
 

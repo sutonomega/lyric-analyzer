@@ -22,6 +22,47 @@ def test_save_and_reopen_song(tmp_path, monkeypatch):
     assert app.text_area[0].value == "窓に残る灯り"
 
 
+def test_old_direct_selection_upgrades_without_reusing_consent_or_rewriting_history(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from lyric_analyzer import local_ai
+    from lyric_analyzer.history import HistoryStore
+    from lyric_analyzer.analysis.comparison import compare
+    from lyric_analyzer.analysis.expressions import detect
+    from lyric_analyzer.analysis.report import build_report
+
+    library = Library(tmp_path / "library.db")
+    store = HistoryStore(library)
+    run = store.save(build_report("対象", compare("対象", ()), detect("対象", ()), {}), "自作")
+    request = local_ai.prepare_request("対象", 1)
+    store.save_suggestion(run, {"provider": "ollama-local", "model": "local:3b", "prompt_version": "local-rewrite-4",
+                               "created_at": Library.now(), "request": request,
+                               "result": {"line_id": request["line_id"], "original": "対象", "reason": "自作確認",
+                                          "candidates": [{"direction": direction, "text": "対象"} for direction in local_ai.DIRECTIONS]}})
+    def script(path, run_id):
+        from lyric_analyzer.local_ai_ui import local_ai_panel
+        from lyric_analyzer.history import HistoryStore
+        from lyric_analyzer.storage import Library
+        store = HistoryStore(Library(path))
+        local_ai_panel(store, store.get(run_id), "migration")
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Must not generate before fresh confirmation")
+    monkeypatch.setattr(local_ai, "generate", unexpected)
+    app = AppTest.from_function(script, args=(str(library.path), run))
+    app.session_state["migration-ai-enabled"] = True
+    app.session_state["migration-ai-models"] = ("local:3b",)
+    app.session_state["migration-ai-method"] = "local-rewrite-4"
+    old_fingerprint = hashlib.sha256(json.dumps(["local:3b", request, local_ai.SYSTEM, "local-rewrite-4",
+                                                local_ai.generation_controls("local-rewrite-4")], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    app.session_state[f"migration-ai-confirm-{old_fingerprint}"] = True
+    app.run()
+    assert not app.exception
+    assert app.selectbox(key="migration-ai-method").value == "local-rewrite-5"
+    assert len(app.selectbox(key="migration-ai-method").options) == 3
+    assert app.button(key="migration-ai-generate").disabled
+    assert store.get(run)["ai_suggestions"][0]["prompt_version"] == "local-rewrite-4"
+
+
 def test_tags_preview_and_json_import(tmp_path, monkeypatch):
     monkeypatch.setenv("LYRIC_ANALYZER_DATA_DIR", str(tmp_path / "target"))
     source = Library(tmp_path / "source.db")
@@ -302,7 +343,7 @@ def test_old_report_reviews_keep_occurrence_based_candidates(tmp_path, monkeypat
     assert any("旧版の評価" in item.value for item in app.caption)
 
 
-@pytest.mark.parametrize("method", ["local-rewrite-2", "local-rewrite-4"])
+@pytest.mark.parametrize("method", ["local-rewrite-2", "local-rewrite-5"])
 def test_local_ai_is_opt_in_confirmation_tracks_payload_and_repeated_save_works(tmp_path, monkeypatch, method):
     from lyric_analyzer import local_ai
     from lyric_analyzer.history import HistoryStore

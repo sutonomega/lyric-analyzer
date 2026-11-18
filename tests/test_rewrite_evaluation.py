@@ -74,12 +74,14 @@ def test_descriptor_requires_local_completion_model(monkeypatch, remote):
         assert evaluation.descriptor("fake") == {"name": "fake", "digest": "a" * 64}
 
 
-def test_explicit_methods_preserve_prompt_but_record_different_schema():
-    result = evaluation.evaluate({"name": "fake"}, generate, prompt_versions=("local-rewrite-2", "local-rewrite-3"))
+@pytest.mark.parametrize("methods", [("local-rewrite-2", "local-rewrite-3"), ("local-rewrite-4", "local-rewrite-5")])
+def test_explicit_methods_preserve_prompt_but_record_different_schema(methods):
+    result = evaluation.evaluate({"name": "fake"}, generate, prompt_versions=methods)
     assert len(result["records"]) == 16
-    assert result["prompt_sha256"]["local-rewrite-2"] == result["prompt_sha256"]["local-rewrite-3"]
+    assert result["prompt_sha256"][methods[0]] == result["prompt_sha256"][methods[1]]
     assert result["records"][0]["response_schema_sha256"] != result["records"][1]["response_schema_sha256"]
-    assert [row["prompt_version"] for row in result["summary"]] == ["local-rewrite-2", "local-rewrite-3"]
+    assert result["records"][0]["generation_controls"] == result["records"][1]["generation_controls"]
+    assert [row["prompt_version"] for row in result["summary"]] == list(methods)
 
 
 @pytest.mark.parametrize("prompts", [[], ["missing"], ["local-rewrite-3", "local-rewrite-3"], "local-rewrite-3"])

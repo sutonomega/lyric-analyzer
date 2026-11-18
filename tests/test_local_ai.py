@@ -177,27 +177,29 @@ def test_incomplete_or_wrong_chat_responses_are_rejected(monkeypatch, transform)
         ai.generate("local:3b", ai.prepare_request("対象", 1))
 
 
-def test_evaluation_schema_binds_exact_input_without_mutating_existing_schemas():
+@pytest.mark.parametrize("method", ["local-rewrite-3", "local-rewrite-5"])
+def test_evaluation_schema_binds_exact_input_without_mutating_existing_schemas(method):
     first = ai.prepare_request('Ａの声と"引用"', 1)
     other = ai.prepare_request("別の原文", 1)
     original = deepcopy(ai.SCHEMA)
-    constrained = ai.response_schema(first, ai.CONSTRAINED_VERSION)
+    constrained = ai.response_schema(first, method)
     for key in ("line_id", "original"):
         assert constrained["properties"][key]["enum"] == [first[key]]
-        assert ai.response_schema(other, ai.CONSTRAINED_VERSION)["properties"][key]["enum"] == [other[key]]
+        assert ai.response_schema(other, method)["properties"][key]["enum"] == [other[key]]
     constrained["properties"]["reason"]["type"] = "modified"
     assert ai.SCHEMA == original
     assert ai.response_schema(first, "local-rewrite-1") == original
     assert ai.response_schema(first, "local-rewrite-2") == original
 
 
-def test_evaluation_constraints_do_not_replace_response_validation(monkeypatch):
+@pytest.mark.parametrize("method", ["local-rewrite-3", "local-rewrite-5"])
+def test_evaluation_constraints_do_not_replace_response_validation(monkeypatch, method):
     calls = fake_transport(monkeypatch)
     request = ai.prepare_request("対象", 1)
-    result = ai.generate("local:3b", request, ai.CONSTRAINED_VERSION)
+    result = ai.generate("local:3b", request, method)
     payload = next(payload for path, payload, timeout in calls if path == "/api/chat")
     assert payload["format"]["properties"]["original"]["enum"] == ["対象"]
-    assert result["prompt_version"] == ai.CONSTRAINED_VERSION
+    assert result["prompt_version"] == method
     def wrong(response):
         value = json.loads(response["message"]["content"])
         value["original"] = "取り違え"
@@ -205,7 +207,7 @@ def test_evaluation_constraints_do_not_replace_response_validation(monkeypatch):
         return response
     fake_transport(monkeypatch, wrong)
     with pytest.raises(ai.LocalAIError, match="原文"):
-        ai.generate("local:3b", request, ai.CONSTRAINED_VERSION)
+        ai.generate("local:3b", request, method)
 
 
 def test_experimental_method_is_not_an_app_or_backup_method(monkeypatch):
@@ -218,14 +220,19 @@ def test_experimental_method_is_not_an_app_or_backup_method(monkeypatch):
         ai.validate_saved_suggestion({"input": "対象"}, suggestion)
 
 
-@pytest.mark.parametrize("method", ["local-rewrite-1", "local-rewrite-2", "local-rewrite-4"])
+@pytest.mark.parametrize("method", ["local-rewrite-1", "local-rewrite-2", "local-rewrite-4", "local-rewrite-5"])
 def test_thinking_off_is_only_requested_for_direct_method(monkeypatch, method):
     calls = fake_transport(monkeypatch)
-    ai.generate("local:3b", ai.prepare_request("対象", 1), method)
+    request = ai.prepare_request("対象", 1)
+    ai.generate("local:3b", request, method)
     payload = next(payload for path, payload, timeout in calls if path == "/api/chat")
     assert payload["options"] == {"temperature": .4, "num_predict": 1200}
-    assert payload["format"] == ai.SCHEMA
     if method == ai.DIRECT_VERSION:
+        assert payload["format"]["properties"]["line_id"]["enum"] == [request["line_id"]]
+        assert payload["format"]["properties"]["original"]["enum"] == ["対象"]
+    else:
+        assert payload["format"] == ai.SCHEMA
+    if method in (ai.DIRECT_VERSION, ai.LEGACY_DIRECT_VERSION):
         assert payload["think"] is False
     else:
         assert "think" not in payload
@@ -246,7 +253,7 @@ def test_direct_method_can_be_saved_and_restored_with_old_methods(tmp_path, monk
     store = HistoryStore(library)
     report = build_report("対象", compare("対象", ()), detect("対象", ()), {})
     run = store.save(report, "自作検証")
-    for method in ("local-rewrite-1", "local-rewrite-2", ai.DIRECT_VERSION):
+    for method in ("local-rewrite-1", "local-rewrite-2", ai.LEGACY_DIRECT_VERSION, ai.DIRECT_VERSION):
         store.save_suggestion(run, ai.generate("local:3b", ai.prepare_request("対象", 1), method))
     target = Library(tmp_path / "target.db")
     restore_backup(target, export_backup(library), confirmed=True)
